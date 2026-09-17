@@ -1,5 +1,11 @@
 # Local development environment variables for Cloudflare Pages
 # Copy this to .dev.vars (never commit .dev.vars itself)
 
-MGA_TOKEN=your-mga-token-here
+AZURE_CLIENT_SECRET=your-entra-client-secret-here
 PILOT_GATE_SECRET=ust-pilot-2026
+
+# Optional overrides (defaults match wrangler.toml / entra.js):
+# AZURE_TENANT_ID=fcb2b37b-5da0-466b-9b83-0014b67a7c78
+# AZURE_CLIENT_ID=5d0b410a-0b42-4427-8bd5-289c1ac0abce
+# AZURE_SCOPE=https://bayer.com/ai-gateway-prod-idp/.default
+# TFY_BASE_URL=https://global.ai-gateway.int.bayer.ai/api/llm

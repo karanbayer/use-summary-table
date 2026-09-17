@@ -20,11 +20,12 @@ Go to **Settings** → **Environment variables** and add:
 
 | Variable | Value | Notes |
 |----------|-------|-------|
-| `MGA_TOKEN` | `[your-mga-token]` | Your personal myGenAssist token from Bayer |
+| `AZURE_CLIENT_SECRET` | `[your-entra-secret]` | Client secret for Entra app "Use Summary Table Extractor" (encrypted secret) |
 | `PILOT_GATE_SECRET` | `ust-pilot-2026` | Must match `PILOT_GATE_HEADER_VALUE` in app/index.html |
 
 **Important:** Set these in the **Production** environment (Cloudflare applies env vars only to deployments built after they're saved).
 
+`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_SCOPE`, `TFY_BASE_URL`,
 `RATE_LIMIT_PER_MINUTE`, `DAILY_BUDGET_USD`, and `AUDIT_TTL_SECONDS` are also configurable
 — as plain (non-secret) `[vars]` in `wrangler.toml`, not dashboard environment variables —
 but have safe defaults baked into the code, so you don't need to set them to get started.
@@ -62,9 +63,11 @@ https://your-site.pages.dev/api/extract
 2. **Function** (`functions/api/extract.js`): Cloudflare Pages Function that:
    - Accepts POST requests to `/api/extract`
    - Validates the `x-ust-pilot: ust-pilot-2026` header
-   - Forwards requests to Bayer's mGA gateway at `https://chat.int.bayer.com`
-   - Adds the `MGA_TOKEN` server-side (never exposed to browser)
-   - Returns Claude's structured response
+   - Obtains an Entra M2M access token (client credentials)
+   - Forwards Anthropic Messages requests to Bayer AI Gateway
+     (`TFY_BASE_URL` + `/v1/messages`, default `https://global.ai-gateway.int.bayer.ai/api/llm`)
+   - Keeps `AZURE_CLIENT_SECRET` server-side (never exposed to browser)
+   - Returns the model's structured response
 
 ## Function Endpoint Mapping
 
@@ -92,7 +95,7 @@ Then open `http://localhost:8788` and test extraction.
 **Note:** Local testing requires setting environment variables:
 
 ```bash
-export MGA_TOKEN="your-token-here"
+export AZURE_CLIENT_SECRET="your-entra-secret-here"
 export PILOT_GATE_SECRET="ust-pilot-2026"
 wrangler pages dev app
 ```
@@ -100,7 +103,7 @@ wrangler pages dev app
 Or create a `.dev.vars` file (never commit this):
 
 ```
-MGA_TOKEN=your-token-here
+AZURE_CLIENT_SECRET=your-entra-secret-here
 PILOT_GATE_SECRET=ust-pilot-2026
 ```
 
@@ -108,11 +111,17 @@ PILOT_GATE_SECRET=ust-pilot-2026
 
 ### "Unauthorized" Error
 - Check that `PILOT_GATE_SECRET` in Cloudflare matches `PILOT_GATE_HEADER_VALUE` in app/index.html
-- Verify `MGA_TOKEN` is set correctly
 
-### "Could not reach mGA" Error
+### "Entra token request failed" Error
+- Verify `AZURE_CLIENT_SECRET` is set and not expired
+- Confirm `llm.read` (Application) is granted on **AI-Gateway-PROD-IDP**
+- Scope must be `https://bayer.com/ai-gateway-prod-idp/.default`
+
+### "Could not reach AI Gateway" / Gateway 401/403
 - Verify you're on Bayer's network or VPN
-- Check that `https://chat.int.bayer.com` is accessible
+- Check that `https://global.ai-gateway.int.bayer.ai` is reachable
+- Confirm TrueFoundry Virtual Account maps your client ID (`azp`) under `bayer-entraid`
+- Model IDs in the app (`claude-sonnet-5` / `claude-opus-5`) must exist on the Gateway, or update them to approved TFY model names
 
 ### "Rate limit exceeded" / "Daily AI budget exceeded" Error
 - Expected behavior from the governance layer (see README.md's "Monitoring, audit trail &

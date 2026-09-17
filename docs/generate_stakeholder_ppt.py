@@ -126,6 +126,13 @@ def arrow(slide, x1, y1, x2, y2, color=BLUE):
     return line
 
 
+def line_only(slide, x1, y1, x2, y2, color=BLUE):
+    line = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(x1), Inches(y1), Inches(x2), Inches(y2))
+    line.line.color.rgb = color
+    line.line.width = Pt(1.6)
+    return line
+
+
 # 1
 slide = prs.slides.add_slide(blank)
 set_bg(slide, NAVY)
@@ -192,9 +199,11 @@ node(slide, 5.85, 2.45, 2.0, 0.95, "Decision\nCritical / High?", PALE_AMBER, AMB
 node(slide, 8.35, 2.45, 2.0, 0.95, "Stage 3\nRemediation", RGBColor(253, 235, 235), RED)
 node(slide, 10.85, 2.45, 1.7, 0.95, "Runtime\nvalidation", PALE_TEAL, GREEN)
 for x in [2.85, 5.35, 7.85, 10.35]: arrow(slide, x, 2.92, x + 0.45, 2.92)
-arrow(slide, 8.8, 3.55, 8.8, 4.45, RED)
-text(slide, "At most 2 cycles", 9.05, 3.85, 1.7, 0.25, 11, RED, True)
-arrow(slide, 8.35, 4.65, 6.85, 3.55, RED)
+# Rectangular feedback loop: down from Stage 3, left under the row, up into Decision
+arrow(slide, 9.35, 3.42, 9.35, 4.75, RED)
+line_only(slide, 9.35, 4.75, 6.85, 4.75, RED)
+arrow(slide, 6.85, 4.75, 6.85, 3.42, RED)
+text(slide, "At most 2 cycles", 7.05, 4.85, 2.1, 0.25, 11, RED, True)
 text(slide, "Only serious findings enter remediation; normal rows go straight to validation.", 1.3, 5.55, 10.8, 0.45, 18, NAVY, True, PP_ALIGN.CENTER)
 text(slide, "Sonnet for extraction/QC  |  Opus escalation for hard corrections", 2.0, 6.2, 9.2, 0.3, 13, MUTED, False, PP_ALIGN.CENTER)
 
@@ -219,24 +228,24 @@ node(slide, 6.15, 3.72, 1.95, 0.7, "Tesseract OCR\nfallback", PALE_TEAL, TEAL)
 arrow(slide, 8.1, 4.07, 8.95, 3.15, TEAL)
 text(slide, "Yes", 7.55, 2.98, 0.38, 0.2, 10, GREEN, True, PP_ALIGN.CENTER)
 
-node(slide, 9.9, 3.72, 1.55, 0.7, "Deterministic\nparser", PALE_BLUE, BLUE)
-node(slide, 11.65, 3.72, 1.0, 0.7, "Runtime\nQC", PALE_TEAL, GREEN)
-arrow(slide, 10.25, 2.93, 10.65, 3.62, AMBER)
-arrow(slide, 11.45, 4.07, 11.65, 4.07, BLUE)
+node(slide, 9.5, 3.72, 1.6, 0.7, "Deterministic\nparser", PALE_BLUE, BLUE)
+node(slide, 11.3, 3.72, 1.5, 0.7, "Runtime\nQC", PALE_TEAL, GREEN)
+arrow(slide, 10.925, 2.93, 10.3, 3.62, AMBER)
+arrow(slide, 11.1, 4.07, 11.3, 4.07, BLUE)
 
-node(slide, 8.35, 4.95, 1.65, 0.7, "Governance\nchecks", PALE_AMBER, AMBER)
-node(slide, 10.35, 4.95, 1.65, 0.7, "mGA / future\nAI Gateway", PALE_BLUE, BLUE)
-node(slide, 12.35, 4.95, 0.7, 0.7, "Claude", PALE_TEAL, TEAL)
-arrow(slide, 8.95, 2.93, 9.0, 4.85, BLUE)
-arrow(slide, 10.0, 5.3, 10.35, 5.3, BLUE)
-arrow(slide, 12.0, 5.3, 12.35, 5.3, BLUE)
+node(slide, 7.8, 4.95, 1.65, 0.7, "Governance\nchecks", PALE_AMBER, AMBER)
+node(slide, 9.65, 4.95, 1.65, 0.7, "mGA / future\nAI Gateway", PALE_BLUE, BLUE)
+node(slide, 11.55, 4.95, 1.35, 0.7, "Claude", PALE_TEAL, TEAL)
+arrow(slide, 9.075, 2.93, 8.625, 4.85, BLUE)
+arrow(slide, 9.45, 5.3, 9.65, 5.3, BLUE)
+arrow(slide, 11.3, 5.3, 11.55, 5.3, BLUE)
 
-node(slide, 8.7, 6.0, 1.5, 0.62, "Structured\nextraction", PALE_BLUE, NAVY)
-node(slide, 10.55, 6.0, 1.5, 0.62, "Independent\nQC", PALE_TEAL, TEAL)
-node(slide, 12.35, 6.0, 0.7, 0.62, "Review", PALE_AMBER, AMBER)
-arrow(slide, 12.7, 5.67, 9.45, 5.98, TEAL)
-arrow(slide, 10.2, 6.3, 10.55, 6.3, TEAL)
-arrow(slide, 12.05, 6.3, 12.35, 6.3, TEAL)
+node(slide, 7.8, 6.0, 1.5, 0.62, "Structured\nextraction", PALE_BLUE, NAVY)
+node(slide, 9.6, 6.0, 1.5, 0.62, "Independent\nQC", PALE_TEAL, TEAL)
+node(slide, 11.4, 6.0, 1.3, 0.62, "Review", PALE_AMBER, AMBER)
+arrow(slide, 12.225, 5.65, 8.55, 5.98, TEAL)
+arrow(slide, 9.3, 6.3, 9.6, 6.3, TEAL)
+arrow(slide, 11.1, 6.3, 11.4, 6.3, TEAL)
 
 # 8
 slide = add_slide("06 / Why the controls matter", "Accuracy is not a single model score")
@@ -264,7 +273,7 @@ for i, (h, b, c) in enumerate(controls):
     x = 0.85 + (i % 3) * 4.1
     y = 2.15 + (i // 3) * 1.75
     card(slide, x, y, 3.55, 1.25, h, b, c, PALE)
-text(slide, "Telemetry target: agent.run + gen_ai.chat, with model/usage/latency metadata only — never prompts, PDF text, or replies.", 1.0, 6.05, 11.3, 0.5, 16, NAVY, True, PP_ALIGN.CENTER)
+text(slide, "All governance controls run server-side before any model call is made.", 1.0, 6.2, 11.3, 0.35, 16, NAVY, True, PP_ALIGN.CENTER)
 
 # 10
 slide = add_slide("09 / Scale and efficiency", "Bound the expensive parts deliberately")
@@ -273,6 +282,28 @@ card(slide, 4.9, 2.15, 3.55, 2.55, "Selective escalation", "Sonnet handles norma
 card(slide, 8.95, 2.15, 3.55, 2.55, "Bounded retries", "Transient failures retry within limits. Remediation stops after two cycles rather than multiplying cost indefinitely.", AMBER, PALE_AMBER)
 text(slide, "Known constraint", 0.95, 5.35, 1.8, 0.3, 14, RED, True)
 text(slide, "Large labels are currently sent as one full-document context. Chunking or retrieval is a future optimization, not a hidden behavior.", 2.65, 5.3, 9.5, 0.45, 18, NAVY, True)
+
+# 10b
+slide = add_slide("09b / Token cost per document", "Predictable per-label spend, not open-ended model usage",
+                  "Numbers below are for a typical 10-page label (≈5,000 doc tokens). Larger labels scale with doc length.")
+
+# Stage cards
+stage_fill = [PALE_BLUE, PALE_TEAL, RGBColor(253, 235, 235)]
+stage_color = [BLUE, TEAL, RED]
+stages = [
+    ("Stage 1  ·  Extraction", "Model: Sonnet 5\nInput: ~21,000 tokens\n(system 14.5K + tools 1.8K + doc 5K)\nOutput: 2,000–4,000 tokens\n(extracted rows JSON)"),
+    ("Stage 2  ·  Independent QC", "Model: Sonnet 5  ·  fresh conversation\nInput: ~22,500 tokens\n(system + doc from cache + rows JSON)\nOutput: 500–1,000 tokens\n(QC report)"),
+    ("Stage 3  ·  Remediation", "Model: Opus 5  ·  only if QC = High/Critical\nInput: adds 40,000–80,000 tokens\n(growing conversation context)\nOutput: adds 8,000–20,000 tokens\nUp to 4 Opus calls (2 cycles × correct+recheck)"),
+]
+for i, (h, b) in enumerate(stages):
+    card(slide, 0.85 + i * 4.18, 2.15, 3.75, 2.95, h, b, stage_color[i], stage_fill[i])
+
+# Pricing row
+rect(slide, 0.85, 5.42, 11.6, 0.62, PALE, PALE, True)
+text(slide, "Pricing (internal estimate):", 1.1, 5.51, 2.5, 0.35, 13, NAVY, True)
+text(slide, "Sonnet 5   $3 / $15 per MTok (in/out)", 3.8, 5.51, 3.5, 0.35, 13, TEAL)
+text(slide, "Opus 5   $15 / $75 per MTok (in/out)", 7.5, 5.51, 3.5, 0.35, 13, RED)
+text(slide, "Clean label (2 Sonnet calls): ~$0.08–$0.12  ·  With remediation (+Opus): ~$1.60–$2.15  ·  Daily budget default: $15 / day", 0.85, 6.25, 11.6, 0.35, 13, MUTED, False, PP_ALIGN.CENTER)
 
 # 11
 slide = add_slide("10 / Deployment target", "From Cloudflare pilot to governed Bayer runtime")

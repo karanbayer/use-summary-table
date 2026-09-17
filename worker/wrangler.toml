@@ -8,9 +8,9 @@
 # (none of this can be done from the repo):
 #   1. Deploy this project (Workers Builds git integration with root
 #      directory "worker/", or manual `wrangler deploy` from this folder).
-#   2. Set MGA_TOKEN as an encrypted secret on THIS Worker project (separate
-#      secret store from the Pages project's copy, even though it's the same
-#      token value): `wrangler secret put MGA_TOKEN` from this folder.
+#   2. Set AZURE_CLIENT_SECRET as an encrypted secret on THIS Worker project
+#      (separate secret store from the Pages project's copy):
+#      `wrangler secret put AZURE_CLIENT_SECRET` from this folder.
 #   3. Bind the same KV namespaces used by the Pages project (fill in the
 #      ids below) — JOBS and AUDIT_LOG must be the SAME namespace ids as
 #      root wrangler.toml's, so job records and the rate-limit/budget/audit
@@ -44,3 +44,7 @@ max_concurrency = 2
 RATE_LIMIT_PER_MINUTE = "20"
 DAILY_BUDGET_USD = "15"
 AUDIT_TTL_SECONDS = "15552000"
+AZURE_TENANT_ID = "fcb2b37b-5da0-466b-9b83-0014b67a7c78"
+AZURE_CLIENT_ID = "5d0b410a-0b42-4427-8bd5-289c1ac0abce"
+AZURE_SCOPE = "https://bayer.com/ai-gateway-prod-idp/.default"
+TFY_BASE_URL = "https://global.ai-gateway.int.bayer.ai/api/llm"

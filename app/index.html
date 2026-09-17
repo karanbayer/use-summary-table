@@ -4111,10 +4111,9 @@ const COLUMN_DEFINITIONS = {
   "Additional Restrictions for Use/Use Site": "tank-mix prohibitions, adjuvant prohibitions, grazing limits, etc."
 };
 
-// Same-origin relay — the browser never talks to chat.int.bayer.com directly
-// (no CORS dependency, no per-colleague credential). The Pages Function at
-// functions/api/extract.js adds the shared pilot mGA credential server-side
-// before forwarding.
+// Same-origin relay — the browser never talks to the AI Gateway directly.
+// functions/api/extract.js obtains an Entra M2M token and forwards the
+// Anthropic Messages body to TrueFoundry (TFY_BASE_URL + /v1/messages).
 const RELAY_ENDPOINT = "/api/extract";
 // Reports a finished document's independent-QC outcome into the durable
 // AUDIT_LOG trail (Bayer AI Pre-Flight's "Agent drift" guardrail — see
@@ -4145,11 +4144,8 @@ const MAX_TOKENS = 64000;
 // bounds worst-case latency/cost per document.
 const REMEDIATION_MAX_CYCLES = 2;
 
-// Stages 1-2 (extraction, independent QC) stay on Sonnet — cheap, fast,
-// handles most labels. Stage 3 (remediation) escalates to Opus, since QC
-// returning Critical/High is already the pipeline's built-in signal that a
-// label is a hard case worth the stronger (and ~5x pricier) model.
-const MODEL_STANDARD = "claude-sonnet-5";
+// All AI stages (extraction, independent QC, remediation) use Opus.
+const MODEL_STANDARD = "claude-opus-5";
 const MODEL_ESCALATED = "claude-opus-5";
 
 // Progress-bar step budget per document, sized to the worst-case call count:
@@ -4570,7 +4566,7 @@ async function askChat(question) {
   renderChatMessages();
 
   const body = JSON.stringify({
-    model: "claude-sonnet-5",
+    model: "claude-opus-5",
     max_tokens: 1500,
     system: buildChatSystemBlocks(),
     tools: [buildProposeEditTool()],
@@ -4667,7 +4663,7 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
   while (needsFix(qcReport) && cycle < REMEDIATION_MAX_CYCLES) {
     cycle++;
     updateAiProgress(pState, `remediating (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
-    logEl.textContent += `   remediation cycle ${cycle}/${REMEDIATION_MAX_CYCLES}: ${(qcReport.defects || []).length} defect(s) (${qcReport.overall}) — escalating to Opus to correct…\n`;
+    logEl.textContent += `   remediation cycle ${cycle}/${REMEDIATION_MAX_CYCLES}: ${(qcReport.defects || []).length} defect(s) (${qcReport.overall}) — correcting on Opus…\n`;
     messages.push({
       role: "user",
       content: [
@@ -4704,7 +4700,7 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
     advanceAiProgress(pState, skipped, cycle > 0 ? "remediation complete (stage 3/3)" : "remediation not needed (stage 3/3)");
   }
   logEl.textContent += cycle > 0
-    ? `   remediation complete after ${cycle} cycle(s) on Opus — final QC status: ${qcReport.overall}.\n`
+    ? `   remediation complete after ${cycle} cycle(s) — final QC status: ${qcReport.overall}.\n`
     : `   QC review: ${qcReport.overall}${(qcReport.defects || []).length ? ` (${qcReport.defects.length} defect(s), below remediation threshold)` : " — clean"}.\n`;
   return { rawRows, qcReport, cycles: cycle };
 }

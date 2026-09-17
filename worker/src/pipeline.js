@@ -23,8 +23,8 @@
 //     page can show equivalent granularity.
 //   - Every `logEl.textContent += ...` becomes a console.log/warn call,
 //     visible via `wrangler tail` — there's no in-page log panel server-side.
-//   - callAnthropic calls mGA directly with env.MGA_TOKEN (same pattern as
-//     functions/api/extract.js), instead of relaying through /api/extract —
+//   - callAnthropic calls the AI Gateway with an Entra M2M token (same pattern
+//     as functions/api/extract.js), instead of relaying through /api/extract —
 //     this is a trusted server-to-server call, no x-ust-pilot header needed.
 //   - The client now sends pageMarkedText already built (page-marking join
 //     happens client-side per the background-job plan), so extractWithLLM
@@ -38,15 +38,12 @@ import {
   GOLDEN_EXAMPLE_V2_TXT
 } from "./knowledge.js";
 import { estimateCostUsd } from "./governance.js";
+import { getGatewayAccessToken, gatewayConfig } from "./entra.js";
 
-const MGA_UPSTREAM = "https://chat.int.bayer.com/anthropic/v1/messages";
 const MAX_TOKENS = 64000;
 const REMEDIATION_MAX_CYCLES = 2;
-// Stages 1-2 (extraction, independent QC) stay on Sonnet — cheap, fast,
-// handles most labels. Stage 3 (remediation) escalates to Opus, since QC
-// returning Critical/High is already the pipeline's built-in signal that a
-// label is a hard case worth the stronger (and ~5x pricier) model.
-const MODEL_STANDARD = "claude-sonnet-5";
+// All AI stages (extraction, independent QC, remediation) use Opus.
+const MODEL_STANDARD = "claude-opus-5";
 const MODEL_ESCALATED = "claude-opus-5";
 const MAX_CHARS = 150000;
 export const JOB_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -377,22 +374,33 @@ async function callAnthropic(env, messages, systemBlocks, tools, toolChoiceName,
     stream: true
   });
 
+  const { messagesUrl } = gatewayConfig(env);
   let data;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     let response;
+    let accessToken;
     try {
-      response = await fetch(MGA_UPSTREAM, {
+      accessToken = await getGatewayAccessToken(env);
+    } catch (err) {
+      if (attempt === MAX_ATTEMPTS) throw new Error(`AI Gateway auth failed: ${err.message}`);
+      console.warn(`Entra token errored (attempt ${attempt}/${MAX_ATTEMPTS}): ${err.message} — retrying…`);
+      await sleep(RETRY_BASE_DELAY_MS * attempt);
+      continue;
+    }
+
+    try {
+      response = await fetch(messagesUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "authorization": `Bearer ${env.MGA_TOKEN}`,
+          "authorization": `Bearer ${accessToken}`,
           "anthropic-version": "2023-06-01"
         },
         body
       });
     } catch (err) {
-      if (attempt === MAX_ATTEMPTS) throw new Error(`mGA request failed: ${err.message}`);
-      console.warn(`mGA request errored (attempt ${attempt}/${MAX_ATTEMPTS}): ${err.message} — retrying…`);
+      if (attempt === MAX_ATTEMPTS) throw new Error(`AI Gateway request failed: ${err.message}`);
+      console.warn(`AI Gateway request errored (attempt ${attempt}/${MAX_ATTEMPTS}): ${err.message} — retrying…`);
       await sleep(RETRY_BASE_DELAY_MS * attempt);
       continue;
     }
@@ -401,9 +409,9 @@ async function callAnthropic(env, messages, systemBlocks, tools, toolChoiceName,
       if (!RETRYABLE_STATUS.has(response.status) || attempt === MAX_ATTEMPTS) {
         let detail = "";
         try { detail = (await response.json()).error?.message || ""; } catch (_) { /* body wasn't JSON */ }
-        throw new Error(`mGA request failed (${response.status})${detail ? `: ${detail}` : ""}`);
+        throw new Error(`AI Gateway request failed (${response.status})${detail ? `: ${detail}` : ""}`);
       }
-      console.warn(`mGA request got ${response.status} (attempt ${attempt}/${MAX_ATTEMPTS}) — retrying…`);
+      console.warn(`AI Gateway request got ${response.status} (attempt ${attempt}/${MAX_ATTEMPTS}) — retrying…`);
       await sleep(RETRY_BASE_DELAY_MS * attempt);
       continue;
     }
@@ -412,8 +420,8 @@ async function callAnthropic(env, messages, systemBlocks, tools, toolChoiceName,
       data = await readMessagesStream(response);
       break;
     } catch (err) {
-      if (attempt === MAX_ATTEMPTS) throw new Error(`mGA stream failed: ${err.message}`);
-      console.warn(`mGA stream dropped (attempt ${attempt}/${MAX_ATTEMPTS}): ${err.message} — retrying…`);
+      if (attempt === MAX_ATTEMPTS) throw new Error(`AI Gateway stream failed: ${err.message}`);
+      console.warn(`AI Gateway stream dropped (attempt ${attempt}/${MAX_ATTEMPTS}): ${err.message} — retrying…`);
       await sleep(RETRY_BASE_DELAY_MS * attempt);
     }
   }
@@ -467,7 +475,7 @@ async function runRemediationLoop(env, jobId, fileIndex, state, rawRows, systemB
   while (needsFix(qcReport) && cycle < REMEDIATION_MAX_CYCLES) {
     cycle++;
     await reportStage(env, jobId, fileIndex, `remediating (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
-    console.log(`remediation cycle ${cycle}/${REMEDIATION_MAX_CYCLES}: ${(qcReport.defects || []).length} defect(s) (${qcReport.overall}) — escalating to Opus to correct…`);
+    console.log(`remediation cycle ${cycle}/${REMEDIATION_MAX_CYCLES}: ${(qcReport.defects || []).length} defect(s) (${qcReport.overall}) — correcting on Opus…`);
     messages.push({
       role: "user",
       content: [
@@ -498,7 +506,7 @@ async function runRemediationLoop(env, jobId, fileIndex, state, rawRows, systemB
     lastToolUseId = recheck.toolUse.id;
   }
   console.log(cycle > 0
-    ? `remediation complete after ${cycle} cycle(s) on Opus — final QC status: ${qcReport.overall}.`
+    ? `remediation complete after ${cycle} cycle(s) — final QC status: ${qcReport.overall}.`
     : `QC review: ${qcReport.overall}${(qcReport.defects || []).length ? ` (${qcReport.defects.length} defect(s), below remediation threshold)` : " — clean"}.`);
   return { rawRows, qcReport, cycles: cycle };
 }

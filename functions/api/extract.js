@@ -1,25 +1,20 @@
 // Cloudflare Pages Function — relays app/index.html's AI-extraction calls to
-// Bayer's internal myGenAssist (mGA) gateway, adding one shared pilot mGA
-// credential server-side so colleagues never need their own token.
+// Bayer's AI Gateway (TrueFoundry) using Entra ID client-credentials (M2M).
+// The browser never sees AZURE_CLIENT_SECRET; token acquisition is server-side.
 //
-// PILOT, not production: Bayer's own guidance is that sharing one person's
-// mGA token is only acceptable for a small pilot (2-3 people), not a broad
-// rollout. A real rollout needs the DSE-app route with a service-account
-// credential and an ITLM governance review (go/beat) — see README.md.
+// Required Cloudflare Pages secrets (Production environment — never commit):
+//   AZURE_CLIENT_SECRET  Entra client secret for "Use Summary Table Extractor"
+//   PILOT_GATE_SECRET    must equal PILOT_GATE_HEADER_VALUE in app/index.html
 //
-// Required Cloudflare Pages environment variables (set as encrypted secrets
-// in the dashboard, Production environment — never committed here):
-//   MGA_TOKEN          the pilot's personal myGenAssist token
-//   PILOT_GATE_SECRET  must equal PILOT_GATE_HEADER_VALUE in app/index.html
+// Optional (defaults baked in for prod Entra resource + documented Gateway host):
+//   AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_SCOPE, TFY_BASE_URL
 //
 // Env var changes only apply to deployments built after they were saved —
-// trigger a fresh deployment (push a commit, or Deployments tab -> ... ->
-// Retry deployment) any time these are added or changed.
+// trigger a fresh deployment any time these are added or changed.
 //
 // A kill switch, rate limiting, a daily cost budget, audit logging, and a
 // content-safety flag are handled by _lib/governance.js (requires the
-// AUDIT_LOG KV binding — see wrangler.toml). See README.md's "AI extraction
-// (pilot)" section for the defaults and what they do.
+// AUDIT_LOG KV binding — see wrangler.toml).
 
 import {
   checkKillSwitch,
@@ -30,8 +25,8 @@ import {
   scanForInjectionPhrases,
   estimateCostUsd
 } from "./_lib/governance.js";
+import { getGatewayAccessToken, gatewayConfig } from "./_lib/entra.js";
 
-const MGA_UPSTREAM = "https://chat.int.bayer.com/anthropic/v1/messages";
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
 export async function onRequestPost(context) {
@@ -104,13 +99,30 @@ export async function onRequestPost(context) {
     /* not our concern here — the upstream request below will fail loudly if bodyText isn't valid JSON */
   }
 
+  let accessToken;
+  try {
+    accessToken = await getGatewayAccessToken(env);
+  } catch (err) {
+    await recordAudit(env, {
+      source: "extract",
+      status: "error",
+      durationMs: Date.now() - startedAt,
+      flags: flags.length ? flags : undefined
+    });
+    return new Response(JSON.stringify({ error: { message: err.message } }), {
+      status: 502,
+      headers: { "content-type": "application/json" }
+    });
+  }
+
+  const { messagesUrl } = gatewayConfig(env);
   let upstreamResponse;
   try {
-    upstreamResponse = await fetch(MGA_UPSTREAM, {
+    upstreamResponse = await fetch(messagesUrl, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "authorization": `Bearer ${env.MGA_TOKEN}`,
+        "authorization": `Bearer ${accessToken}`,
         "anthropic-version": "2023-06-01"
       },
       body: bodyText
@@ -122,7 +134,7 @@ export async function onRequestPost(context) {
       durationMs: Date.now() - startedAt,
       flags: flags.length ? flags : undefined
     });
-    return new Response(JSON.stringify({ error: { message: `Could not reach mGA: ${err.message}` } }), {
+    return new Response(JSON.stringify({ error: { message: `Could not reach AI Gateway: ${err.message}` } }), {
       status: 502,
       headers: { "content-type": "application/json" }
     });
@@ -134,12 +146,16 @@ export async function onRequestPost(context) {
   // a parse or logging failure here must never change what the client gets.
   try {
     const parsed = JSON.parse(upstreamBody);
-    const estCostUsd = parsed.usage ? estimateCostUsd({
-      inputTokens: parsed.usage.input_tokens || 0,
-      outputTokens: parsed.usage.output_tokens || 0
-    }, model) : 0;
-    const usage = parsed.usage
-      ? { inputTokens: parsed.usage.input_tokens || 0, outputTokens: parsed.usage.output_tokens || 0, estCostUsd }
+    const usageRaw = parsed.usage || {};
+    // Anthropic uses input_tokens/output_tokens; OpenAI-style gateways may use
+    // prompt_tokens/completion_tokens — accept either for budget tracking.
+    const inputTokens = usageRaw.input_tokens ?? usageRaw.prompt_tokens ?? 0;
+    const outputTokens = usageRaw.output_tokens ?? usageRaw.completion_tokens ?? 0;
+    const estCostUsd = (inputTokens || outputTokens)
+      ? estimateCostUsd({ inputTokens, outputTokens }, model)
+      : 0;
+    const usage = (inputTokens || outputTokens)
+      ? { inputTokens, outputTokens, estCostUsd }
       : null;
     if (usage) await recordUsage(env, usage);
     await recordAudit(env, {
