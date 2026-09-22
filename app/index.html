@@ -5203,6 +5203,7 @@ async function finishRun(documents, totalPages, selectedAi) {
   sortCol = null;
 
   const remediation = applyRuntimeQcRemediation(allRows, documents);
+  allRows.forEach(sanitizeRowForEpa);
 
   // Schema verification — every row must have all columns filled
   const bad = allRows.filter(r => !isSchemaCompliant(
@@ -5431,6 +5432,7 @@ function hydrateFromJob(job, runContext) {
   sortCol = null;
 
   const remediation = applyRuntimeQcRemediation(allRows, documents);
+  allRows.forEach(sanitizeRowForEpa);
   const bad = allRows.filter(r => !isSchemaCompliant(
     Object.fromEntries(SCHEMA.map(c => [c, r[c]]))
   ));
