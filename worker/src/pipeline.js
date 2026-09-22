@@ -312,10 +312,10 @@ async function readMessagesStream(response) {
   const usage = { inputTokens: 0, outputTokens: 0 };
 
   const handleEvent = (dataLine) => {
-    if (!dataLine) return;
+    if (!dataLine || dataLine === "[DONE]") return;
     const evt = JSON.parse(dataLine);
     if (evt.type === "error") {
-      throw new Error(evt.error?.message || "mGA stream reported an error event");
+      throw new Error(evt.error?.message || "AI Gateway stream reported an error event");
     } else if (evt.type === "message_start") {
       if (evt.message?.usage?.input_tokens != null) usage.inputTokens = evt.message.usage.input_tokens;
     } else if (evt.type === "content_block_start") {
@@ -323,16 +323,32 @@ async function readMessagesStream(response) {
     } else if (evt.type === "content_block_delta") {
       const block = blocksByIndex.get(evt.index);
       if (!block) return;
-      if (evt.delta.type === "input_json_delta") block._json += evt.delta.partial_json;
+      if (evt.delta.type === "input_json_delta") block._json += evt.delta.partial_json || "";
       else if (evt.delta.type === "text_delta") block.text = (block.text || "") + evt.delta.text;
     } else if (evt.type === "content_block_stop") {
       const block = blocksByIndex.get(evt.index);
-      if (block && block.type === "tool_use") {
-        block.input = block._json ? JSON.parse(block._json) : {};
+      if (block && block.type === "tool_use" && block._json) {
+        block.input = JSON.parse(block._json);
       }
     } else if (evt.type === "message_delta") {
       if (evt.delta?.stop_reason) stopReason = evt.delta.stop_reason;
       if (evt.usage?.output_tokens != null) usage.outputTokens = evt.usage.output_tokens;
+    }
+  };
+
+  const flushBuffer = (flushTail) => {
+    buffer = buffer.replace(/\r\n/g, "\n");
+    let sepIndex;
+    while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
+      const rawEvent = buffer.slice(0, sepIndex);
+      buffer = buffer.slice(sepIndex + 2);
+      const dataLines = rawEvent.split("\n").filter(line => line.startsWith("data:"));
+      if (dataLines.length) handleEvent(dataLines.map(line => line.slice(5).trim()).join(""));
+    }
+    if (flushTail && buffer.trim()) {
+      const dataLines = buffer.split("\n").filter(line => line.startsWith("data:"));
+      if (dataLines.length) handleEvent(dataLines.map(line => line.slice(5).trim()).join(""));
+      buffer = "";
     }
   };
 
@@ -341,18 +357,26 @@ async function readMessagesStream(response) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += value;
-      let sepIndex;
-      while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
-        const rawEvent = buffer.slice(0, sepIndex);
-        buffer = buffer.slice(sepIndex + 2);
-        const dataLine = rawEvent
-          .split("\n")
-          .find(line => line.startsWith("data:"));
-        if (dataLine) handleEvent(dataLine.slice(5).trim());
-      }
+      flushBuffer(false);
     }
+    flushBuffer(true);
   } finally {
     reader.releaseLock();
+  }
+
+  for (const block of blocksByIndex.values()) {
+    if (block.type !== "tool_use") continue;
+    if (block._json) {
+      try {
+        block.input = JSON.parse(block._json);
+      } catch (err) {
+        throw new Error(
+          `AI Gateway stream returned incomplete tool JSON (${block.name || "tool_use"}): ${err.message}`
+        );
+      }
+    } else if (!block.input || typeof block.input !== "object") {
+      block.input = {};
+    }
   }
 
   const content = [...blocksByIndex.values()].map(({ _json, ...block }) => block);
@@ -434,6 +458,11 @@ async function callAnthropic(env, messages, systemBlocks, tools, toolChoiceName,
   }
   const toolUse = (data.content || []).find(b => b.type === "tool_use" && b.name === toolChoiceName);
   if (!toolUse) throw new Error(`Model response did not include the expected structured output (${toolChoiceName}).`);
+  if (toolChoiceName === "emit_use_summary_rows" && !Array.isArray(toolUse.input?.rows)) {
+    throw new Error(
+      `Extraction tool returned no rows array (stream may have been truncated; stop_reason=${data.stop_reason || "unknown"}).`
+    );
+  }
   return { data, toolUse };
 }
 

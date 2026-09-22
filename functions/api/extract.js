@@ -3,8 +3,12 @@
 //
 // Upstream Anthropic calls use stream:true. The SSE body is piped through to
 // the browser so this Function does not buffer a multi-minute generation
-// (which was causing Cloudflare/proxy 504s on large labels). Audit/usage is
-// recorded best-effort via waitUntil on a tee'd copy of the stream.
+// (which was causing Cloudflare/proxy 504s on large labels).
+//
+// Do NOT tee() the body for audit/usage: an unread tee branch backpressures
+// the client branch and truncates large tool_use streams (empty rows, while
+// small QC reports still succeed). Audit records status/model only; token
+// usage for streamed calls is omitted.
 //
 // Required Cloudflare Pages secrets (Production environment — never commit):
 //   AZURE_CLIENT_SECRET  Entra client secret for "Use Summary Table Extractor"
@@ -14,13 +18,11 @@ import {
   checkKillSwitch,
   checkRateLimit,
   checkBudget,
-  recordUsage,
   recordAudit,
-  scanForInjectionPhrases,
-  estimateCostUsd
+  scanForInjectionPhrases
 } from "./_lib/governance.js";
 import { getGatewayAccessToken, gatewayConfig } from "./_lib/entra.js";
-import { readMessagesStream, withStreamEnabled } from "./_lib/anthropic-stream.js";
+import { withStreamEnabled } from "./_lib/anthropic-stream.js";
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
@@ -163,48 +165,17 @@ export async function onRequestPost(context) {
     });
   }
 
-  const [toClient, toAudit] = upstreamResponse.body.tee();
-
-  const auditTask = (async () => {
-    try {
-      const assembled = await readMessagesStream(new Response(toAudit));
-      const usageRaw = assembled.usage || {};
-      const inputTokens = usageRaw.input_tokens ?? 0;
-      const outputTokens = usageRaw.output_tokens ?? 0;
-      const estCostUsd = (inputTokens || outputTokens)
-        ? estimateCostUsd({ inputTokens, outputTokens }, model)
-        : 0;
-      const usage = (inputTokens || outputTokens)
-        ? { inputTokens, outputTokens, estCostUsd }
-        : null;
-      if (usage) await recordUsage(env, usage);
-      await recordAudit(env, {
-        source: "extract",
-        status: "ok",
-        durationMs: Date.now() - startedAt,
-        model,
-        inputTokens: usage?.inputTokens,
-        outputTokens: usage?.outputTokens,
-        estCostUsd: usage ? estCostUsd : undefined,
-        flags: flags.length ? flags : undefined
-      });
-    } catch (err) {
-      console.error(`extract.js: stream audit failed: ${err.message}`);
-      try {
-        await recordAudit(env, {
-          source: "extract",
-          status: "error",
-          durationMs: Date.now() - startedAt,
-          model,
-          flags: flags.length ? flags : undefined
-        });
-      } catch (_) { /* ignore */ }
-    }
-  })();
-
+  // Fire-and-forget audit without consuming the body (no tee / no backpressure).
+  const auditTask = recordAudit(env, {
+    source: "extract",
+    status: "ok_stream",
+    durationMs: Date.now() - startedAt,
+    model,
+    flags: flags.length ? flags : undefined
+  }).catch(err => console.error(`extract.js: audit failed: ${err.message}`));
   if (typeof waitUntil === "function") waitUntil(auditTask);
 
-  return new Response(toClient, {
+  return new Response(upstreamResponse.body, {
     status: 200,
     headers: {
       "content-type": "text/event-stream; charset=utf-8",
