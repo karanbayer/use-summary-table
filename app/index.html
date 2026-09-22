@@ -4353,6 +4353,64 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Reassemble Anthropic Messages SSE (from /api/extract streaming relay) into
+// the non-streaming { stop_reason, content } shape used by the rest of the pipeline.
+async function readMessagesStream(response) {
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  const blocksByIndex = new Map();
+  let stopReason = null;
+  let buffer = "";
+  const usage = { input_tokens: 0, output_tokens: 0 };
+
+  const handleEvent = (dataLine) => {
+    if (!dataLine) return;
+    const evt = JSON.parse(dataLine);
+    if (evt.type === "error") {
+      throw new Error(evt.error?.message || "AI Gateway stream reported an error event");
+    } else if (evt.type === "message_start") {
+      if (evt.message?.usage?.input_tokens != null) usage.input_tokens = evt.message.usage.input_tokens;
+    } else if (evt.type === "content_block_start") {
+      blocksByIndex.set(evt.index, { ...evt.content_block, _json: "" });
+    } else if (evt.type === "content_block_delta") {
+      const block = blocksByIndex.get(evt.index);
+      if (!block) return;
+      if (evt.delta.type === "input_json_delta") block._json += evt.delta.partial_json;
+      else if (evt.delta.type === "text_delta") block.text = (block.text || "") + evt.delta.text;
+      else if (evt.delta.type === "thinking_delta" && evt.delta.thinking != null) {
+        block.thinking = (block.thinking || "") + evt.delta.thinking;
+      }
+    } else if (evt.type === "content_block_stop") {
+      const block = blocksByIndex.get(evt.index);
+      if (block && block.type === "tool_use") {
+        block.input = block._json ? JSON.parse(block._json) : {};
+      }
+    } else if (evt.type === "message_delta") {
+      if (evt.delta?.stop_reason) stopReason = evt.delta.stop_reason;
+      if (evt.usage?.output_tokens != null) usage.output_tokens = evt.usage.output_tokens;
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += value;
+      let sepIndex;
+      while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
+        const rawEvent = buffer.slice(0, sepIndex);
+        buffer = buffer.slice(sepIndex + 2);
+        const dataLine = rawEvent.split("\n").find(line => line.startsWith("data:"));
+        if (dataLine) handleEvent(dataLine.slice(5).trim());
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const content = [...blocksByIndex.values()].map(({ _json, ...block }) => block);
+  return { stop_reason: stopReason, content, usage, type: "message", role: "assistant" };
+}
+
 async function callAnthropic(messages, systemBlocks, tools, toolChoiceName, model = MODEL_STANDARD) {
   const body = JSON.stringify({
     model,
@@ -4360,7 +4418,8 @@ async function callAnthropic(messages, systemBlocks, tools, toolChoiceName, mode
     system: systemBlocks,
     messages,
     tools,
-    tool_choice: { type: "tool", name: toolChoiceName }
+    tool_choice: { type: "tool", name: toolChoiceName },
+    stream: true
   });
 
   let response;
@@ -4386,7 +4445,9 @@ async function callAnthropic(messages, systemBlocks, tools, toolChoiceName, mode
     throw new Error(`AI Gateway request failed (${response.status})${detail ? `: ${detail}` : ""}`);
   }
 
-  const data = await response.json();
+  const isStream = (response.headers.get("content-type") || "").includes("text/event-stream")
+    || response.headers.get("x-ust-stream") === "1";
+  const data = isStream ? await readMessagesStream(response) : await response.json();
   if (data.stop_reason === "max_tokens") {
     // The tool-use JSON may be cut off mid-row — surface this rather than
     // silently presenting a possibly-truncated row set as complete.
@@ -4574,7 +4635,8 @@ async function askChat(question) {
     system: buildChatSystemBlocks(),
     tools: [buildProposeEditTool()],
     tool_choice: { type: "auto" },
-    messages: [...chatMessages, { role: "user", content: [{ type: "text", text: question }] }]
+    messages: [...chatMessages, { role: "user", content: [{ type: "text", text: question }] }],
+    stream: true
   });
 
   let response;
@@ -4595,7 +4657,9 @@ async function askChat(question) {
       throw new Error(`Request failed (${response.status})${detail ? `: ${detail}` : ""}`);
     }
 
-    const data = await response.json();
+    const isStream = (response.headers.get("content-type") || "").includes("text/event-stream")
+      || response.headers.get("x-ust-stream") === "1";
+    const data = isStream ? await readMessagesStream(response) : await response.json();
     if (!data.content || !data.content.length) throw new Error("Response did not include an answer.");
 
     chatMessages.push({ role: "user", content: [{ type: "text", text: question }] });

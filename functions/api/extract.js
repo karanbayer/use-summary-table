@@ -1,22 +1,14 @@
 // Cloudflare Pages Function — relays app/index.html's AI-extraction calls to
 // Bayer's AI Gateway (TrueFoundry) using Entra ID client-credentials (M2M).
-// Upstream calls use Anthropic streaming to avoid gateway/proxy idle timeouts
-// (504/524) on long generations; the Function reassembles SSE into the same
-// JSON message shape the browser already expects.
+//
+// Upstream Anthropic calls use stream:true. The SSE body is piped through to
+// the browser so this Function does not buffer a multi-minute generation
+// (which was causing Cloudflare/proxy 504s on large labels). Audit/usage is
+// recorded best-effort via waitUntil on a tee'd copy of the stream.
 //
 // Required Cloudflare Pages secrets (Production environment — never commit):
 //   AZURE_CLIENT_SECRET  Entra client secret for "Use Summary Table Extractor"
 //   PILOT_GATE_SECRET    must equal PILOT_GATE_HEADER_VALUE in app/index.html
-//
-// Optional (defaults baked in for prod Entra resource + documented Gateway host):
-//   AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_SCOPE, TFY_BASE_URL
-//
-// Env var changes only apply to deployments built after they were saved —
-// trigger a fresh deployment any time these are added or changed.
-//
-// A kill switch, rate limiting, a daily cost budget, audit logging, and a
-// content-safety flag are handled by _lib/governance.js (requires the
-// AUDIT_LOG KV binding — see wrangler.toml).
 
 import {
   checkKillSwitch,
@@ -33,7 +25,7 @@ import { readMessagesStream, withStreamEnabled } from "./_lib/anthropic-stream.j
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
 export async function onRequestPost(context) {
-  const { request, env } = context;
+  const { request, env, waitUntil } = context;
   const startedAt = Date.now();
 
   const gate = request.headers.get("x-ust-pilot");
@@ -158,59 +150,66 @@ export async function onRequestPost(context) {
         flags: flags.length ? flags : undefined
       });
     } catch (_) { /* ignore */ }
-    return new Response(errText, {
+    return new Response(errText || JSON.stringify({ error: { message: `AI Gateway HTTP ${upstreamResponse.status}` } }), {
       status: upstreamResponse.status,
       headers: { "content-type": "application/json" }
     });
   }
 
-  let assembled;
-  try {
-    assembled = await readMessagesStream(upstreamResponse);
-    if (model) assembled.model = model;
-  } catch (err) {
-    await recordAudit(env, {
-      source: "extract",
-      status: "error",
-      durationMs: Date.now() - startedAt,
-      model,
-      flags: flags.length ? flags : undefined
-    });
-    return new Response(JSON.stringify({ error: { message: `AI Gateway stream failed: ${err.message}` } }), {
+  if (!upstreamResponse.body) {
+    return new Response(JSON.stringify({ error: { message: "AI Gateway returned an empty body" } }), {
       status: 502,
       headers: { "content-type": "application/json" }
     });
   }
 
-  const upstreamBodyOut = JSON.stringify(assembled);
+  const [toClient, toAudit] = upstreamResponse.body.tee();
 
-  try {
-    const usageRaw = assembled.usage || {};
-    const inputTokens = usageRaw.input_tokens ?? usageRaw.prompt_tokens ?? 0;
-    const outputTokens = usageRaw.output_tokens ?? usageRaw.completion_tokens ?? 0;
-    const estCostUsd = (inputTokens || outputTokens)
-      ? estimateCostUsd({ inputTokens, outputTokens }, model)
-      : 0;
-    const usage = (inputTokens || outputTokens)
-      ? { inputTokens, outputTokens, estCostUsd }
-      : null;
-    if (usage) await recordUsage(env, usage);
-    await recordAudit(env, {
-      source: "extract",
-      status: "ok",
-      durationMs: Date.now() - startedAt,
-      model,
-      inputTokens: usage?.inputTokens,
-      outputTokens: usage?.outputTokens,
-      estCostUsd: usage ? estCostUsd : undefined,
-      flags: flags.length ? flags : undefined
-    });
-  } catch (err) {
-    console.error(`extract.js: could not log usage/audit (response to client is unaffected): ${err.message}`);
-  }
+  const auditTask = (async () => {
+    try {
+      const assembled = await readMessagesStream(new Response(toAudit));
+      const usageRaw = assembled.usage || {};
+      const inputTokens = usageRaw.input_tokens ?? 0;
+      const outputTokens = usageRaw.output_tokens ?? 0;
+      const estCostUsd = (inputTokens || outputTokens)
+        ? estimateCostUsd({ inputTokens, outputTokens }, model)
+        : 0;
+      const usage = (inputTokens || outputTokens)
+        ? { inputTokens, outputTokens, estCostUsd }
+        : null;
+      if (usage) await recordUsage(env, usage);
+      await recordAudit(env, {
+        source: "extract",
+        status: "ok",
+        durationMs: Date.now() - startedAt,
+        model,
+        inputTokens: usage?.inputTokens,
+        outputTokens: usage?.outputTokens,
+        estCostUsd: usage ? estCostUsd : undefined,
+        flags: flags.length ? flags : undefined
+      });
+    } catch (err) {
+      console.error(`extract.js: stream audit failed: ${err.message}`);
+      try {
+        await recordAudit(env, {
+          source: "extract",
+          status: "error",
+          durationMs: Date.now() - startedAt,
+          model,
+          flags: flags.length ? flags : undefined
+        });
+      } catch (_) { /* ignore */ }
+    }
+  })();
 
-  return new Response(upstreamBodyOut, {
+  if (typeof waitUntil === "function") waitUntil(auditTask);
+
+  return new Response(toClient, {
     status: 200,
-    headers: { "content-type": "application/json" }
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+      "x-ust-stream": "1"
+    }
   });
 }
