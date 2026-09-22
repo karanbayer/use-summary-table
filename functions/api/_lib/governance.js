@@ -29,7 +29,7 @@ const MODEL_PRICING = {
   "anthropic/claude-sonnet-5": { inputPerMtok: 3, outputPerMtok: 15 },
   "anthropic/claude-opus-5": { inputPerMtok: 15, outputPerMtok: 75 }
 };
-const DEFAULT_MODEL = "anthropic/claude-opus-5";
+const DEFAULT_MODEL = "anthropic/claude-sonnet-5";
 
 // Coarse tripwire only — flags for human review, never blocks. False
 // positives on real label text are likely (labels legitimately contain

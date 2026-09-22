@@ -121,7 +121,7 @@ PILOT_GATE_SECRET=ust-pilot-2026
 - Verify you're on Bayer's network or VPN
 - Check that `https://global.ai-gateway.int.bayer.ai` is reachable
 - Confirm TrueFoundry Virtual Account maps your client ID (`azp`) under `bayer-entraid`
-- Model IDs in the app (`anthropic/claude-opus-5`) must match Gateway model names
+- Model IDs: `anthropic/claude-sonnet-5` (extraction/QC), `anthropic/claude-opus-5` (remediation)
 
 ### "Rate limit exceeded" / "Daily AI budget exceeded" Error
 - Expected behavior from the governance layer (see README.md's "Monitoring, audit trail &

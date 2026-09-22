@@ -188,9 +188,10 @@ small governance layer (`functions/api/_lib/governance.js`, duplicated at
   in incoming label text. A match never blocks extraction (false positives on real labels
   are likely); it's recorded on that call's audit record for human review. The real
   defense stays the existing human-in-the-loop row review before export.
-- **Model** — extraction, independent QC, and remediation all use
-  `anthropic/claude-opus-5` via Bayer AI Gateway (Entra M2M). Cost estimates are priced per
-  call at that model's rate (`estimateCostUsd(usage, model)`).
+- **Model** — extraction and independent QC use `anthropic/claude-sonnet-5`;
+  remediation escalates to `anthropic/claude-opus-5` when QC is Critical/High.
+  The Pages `/api/extract` relay streams upstream to avoid AI Gateway idle
+  timeouts (504) on long generations. Cost estimates use `estimateCostUsd(usage, model)`.
 
 None of this fixes the pilot gate itself being a shared secret visible in client-side JS
 (`PILOT_GATE_HEADER_VALUE` in `app/index.html`) — that's a real-auth gap (Entra Agent ID)

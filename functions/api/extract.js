@@ -1,6 +1,8 @@
 // Cloudflare Pages Function — relays app/index.html's AI-extraction calls to
 // Bayer's AI Gateway (TrueFoundry) using Entra ID client-credentials (M2M).
-// The browser never sees AZURE_CLIENT_SECRET; token acquisition is server-side.
+// Upstream calls use Anthropic streaming to avoid gateway/proxy idle timeouts
+// (504/524) on long generations; the Function reassembles SSE into the same
+// JSON message shape the browser already expects.
 //
 // Required Cloudflare Pages secrets (Production environment — never commit):
 //   AZURE_CLIENT_SECRET  Entra client secret for "Use Summary Table Extractor"
@@ -26,6 +28,7 @@ import {
   estimateCostUsd
 } from "./_lib/governance.js";
 import { getGatewayAccessToken, gatewayConfig } from "./_lib/entra.js";
+import { readMessagesStream, withStreamEnabled } from "./_lib/anthropic-stream.js";
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
@@ -90,13 +93,17 @@ export async function onRequestPost(context) {
 
   const flags = scanForInjectionPhrases(bodyText);
 
-  // Best-effort — only used to price this call at the right model's rate;
-  // a parse failure just falls back to estimateCostUsd's default (Sonnet).
   let model;
+  let upstreamBody;
   try {
-    model = JSON.parse(bodyText)?.model;
+    const enabled = withStreamEnabled(bodyText);
+    model = enabled.parsed?.model;
+    upstreamBody = enabled.upstreamBody;
   } catch (_) {
-    /* not our concern here — the upstream request below will fail loudly if bodyText isn't valid JSON */
+    return new Response(JSON.stringify({ error: { message: "Request body must be valid JSON" } }), {
+      status: 400,
+      headers: { "content-type": "application/json" }
+    });
   }
 
   let accessToken;
@@ -125,7 +132,7 @@ export async function onRequestPost(context) {
         "authorization": `Bearer ${accessToken}`,
         "anthropic-version": "2023-06-01"
       },
-      body: bodyText
+      body: upstreamBody
     });
   } catch (err) {
     await recordAudit(env, {
@@ -140,15 +147,45 @@ export async function onRequestPost(context) {
     });
   }
 
-  const upstreamBody = await upstreamResponse.text();
+  if (!upstreamResponse.ok) {
+    const errText = await upstreamResponse.text();
+    try {
+      await recordAudit(env, {
+        source: "extract",
+        status: "error",
+        durationMs: Date.now() - startedAt,
+        model,
+        flags: flags.length ? flags : undefined
+      });
+    } catch (_) { /* ignore */ }
+    return new Response(errText, {
+      status: upstreamResponse.status,
+      headers: { "content-type": "application/json" }
+    });
+  }
 
-  // Log usage/audit off a parsed clone of the same text we return below —
-  // a parse or logging failure here must never change what the client gets.
+  let assembled;
   try {
-    const parsed = JSON.parse(upstreamBody);
-    const usageRaw = parsed.usage || {};
-    // Anthropic uses input_tokens/output_tokens; OpenAI-style gateways may use
-    // prompt_tokens/completion_tokens — accept either for budget tracking.
+    assembled = await readMessagesStream(upstreamResponse);
+    if (model) assembled.model = model;
+  } catch (err) {
+    await recordAudit(env, {
+      source: "extract",
+      status: "error",
+      durationMs: Date.now() - startedAt,
+      model,
+      flags: flags.length ? flags : undefined
+    });
+    return new Response(JSON.stringify({ error: { message: `AI Gateway stream failed: ${err.message}` } }), {
+      status: 502,
+      headers: { "content-type": "application/json" }
+    });
+  }
+
+  const upstreamBodyOut = JSON.stringify(assembled);
+
+  try {
+    const usageRaw = assembled.usage || {};
     const inputTokens = usageRaw.input_tokens ?? usageRaw.prompt_tokens ?? 0;
     const outputTokens = usageRaw.output_tokens ?? usageRaw.completion_tokens ?? 0;
     const estCostUsd = (inputTokens || outputTokens)
@@ -160,7 +197,7 @@ export async function onRequestPost(context) {
     if (usage) await recordUsage(env, usage);
     await recordAudit(env, {
       source: "extract",
-      status: upstreamResponse.ok ? "ok" : "error",
+      status: "ok",
       durationMs: Date.now() - startedAt,
       model,
       inputTokens: usage?.inputTokens,
@@ -172,8 +209,8 @@ export async function onRequestPost(context) {
     console.error(`extract.js: could not log usage/audit (response to client is unaffected): ${err.message}`);
   }
 
-  return new Response(upstreamBody, {
-    status: upstreamResponse.status,
+  return new Response(upstreamBodyOut, {
+    status: 200,
     headers: { "content-type": "application/json" }
   });
 }
