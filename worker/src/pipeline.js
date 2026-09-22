@@ -41,7 +41,7 @@ import { estimateCostUsd } from "./governance.js";
 import { getGatewayAccessToken, gatewayConfig } from "./entra.js";
 
 const MAX_TOKENS = 64000;
-const REMEDIATION_MAX_CYCLES = 2;
+const REMEDIATION_MAX_CYCLES = 1; // pilot: one Opus patch cycle max (was 2)
 // Stages 1–2 (extraction, independent QC) use Sonnet for latency on large
 // labels; stage 3 (remediation) uses Opus when QC is Critical/High.
 // Gateway model IDs are provider-prefixed (confirmed against
@@ -226,14 +226,86 @@ function buildQcReportTool() {
   };
 }
 
+function buildRowPatchesTool() {
+  const rowProperties = {};
+  SCHEMA.forEach(col => {
+    rowProperties[col] = { type: "string" };
+    if (COLUMN_DEFINITIONS[col]) rowProperties[col].description = COLUMN_DEFINITIONS[col];
+  });
+  rowProperties["Page"] = { type: "string", description: "1-based page number." };
+  rowProperties["Evidence"] = { type: "string", description: "Short verbatim phrase from the label." };
+
+  return {
+    name: "emit_row_patches",
+    description: "Apply targeted corrections during remediation. Prefer patches over re-emitting the whole table. Use add_rows only for missing uses; remove_row_indices for true duplicates.",
+    input_schema: {
+      type: "object",
+      properties: {
+        patches: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              row_index: { type: "integer" },
+              column: { type: "string", enum: SCHEMA.concat(["Page", "Evidence"]) },
+              new_value: { type: "string" },
+              reason: { type: "string" }
+            },
+            required: ["row_index", "column", "new_value"]
+          }
+        },
+        add_rows: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: rowProperties,
+            required: SCHEMA.concat(["Page"])
+          }
+        },
+        remove_row_indices: {
+          type: "array",
+          items: { type: "integer" }
+        }
+      },
+      required: ["patches"]
+    }
+  };
+}
+
+function applyRowPatches(rawRows, patchInput) {
+  let rows = (rawRows || []).map(r => ({ ...r }));
+  let applied = 0;
+  (patchInput?.patches || []).forEach(p => {
+    const idx = Number(p.row_index);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= rows.length) return;
+    const col = p.column;
+    if (!col || (!SCHEMA.includes(col) && col !== "Page" && col !== "Evidence")) return;
+    rows[idx][col] = p.new_value != null ? String(p.new_value) : rows[idx][col];
+    applied++;
+  });
+  const remove = new Set(
+    (patchInput?.remove_row_indices || [])
+      .map(Number)
+      .filter(i => Number.isInteger(i) && i >= 0 && i < rows.length)
+  );
+  if (remove.size) rows = rows.filter((_, i) => !remove.has(i));
+  let added = 0;
+  (patchInput?.add_rows || []).forEach(add => {
+    const row = {};
+    SCHEMA.forEach(c => {
+      const v = add[c];
+      row[c] = v !== undefined && v !== null && String(v).trim() !== "" ? String(v) : NOT_SPECIFIED;
+    });
+    if (add.Page) row.Page = String(add.Page);
+    if (add.Evidence) row.Evidence = String(add.Evidence);
+    rows.push(row);
+    added++;
+  });
+  return { rows, applied, added, removed: remove.size };
+}
+
 function buildTools() {
-  // Both tool schemas are sent on every call, regardless of stage —
-  // tool_choice forces which one actually fires. Keeping the tools array
-  // byte-identical across every call in the pipeline (extraction, QC,
-  // remediation) is what lets the knowledge-block cache breakpoint below
-  // survive across stages instead of invalidating every time the forced
-  // tool changes.
-  return [buildRowSchemaTool(), buildQcReportTool()];
+  return [buildRowSchemaTool(), buildQcReportTool(), buildRowPatchesTool()];
 }
 
 function buildSystemBlocks() {
@@ -463,6 +535,11 @@ async function callAnthropic(env, messages, systemBlocks, tools, toolChoiceName,
       `Extraction tool returned no rows array (stream may have been truncated; stop_reason=${data.stop_reason || "unknown"}).`
     );
   }
+  if (toolChoiceName === "emit_row_patches" && !Array.isArray(toolUse.input?.patches)) {
+    throw new Error(
+      `Remediation tool returned no patches array (stream may have been truncated; stop_reason=${data.stop_reason || "unknown"}).`
+    );
+  }
   return { data, toolUse };
 }
 
@@ -507,35 +584,57 @@ async function runRemediationLoop(env, jobId, fileIndex, state, rawRows, systemB
   while (needsFix(qcReport) && cycle < REMEDIATION_MAX_CYCLES) {
     cycle++;
     await reportStage(env, jobId, fileIndex, `remediating (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
-    console.log(`remediation cycle ${cycle}/${REMEDIATION_MAX_CYCLES}: ${(qcReport.defects || []).length} defect(s) (${qcReport.overall}) — correcting on Opus…`);
+    console.log(`remediation cycle ${cycle}/${REMEDIATION_MAX_CYCLES}: ${(qcReport.defects || []).length} defect(s) (${qcReport.overall}) — correcting on Opus (patches)…`);
     messages.push({
       role: "user",
       content: [
         { type: "tool_result", tool_use_id: lastToolUseId, content: "Received." },
         {
           type: "text",
-          text: `Correct the rows to resolve every defect below, then re-emit the complete corrected row set (not just the changed rows):\n${JSON.stringify(qcReport.defects || [])}`
+          text: [
+            "Correct the defects below using emit_row_patches — do NOT re-emit the full table.",
+            "For each cell defect: one patch with row_index, column, and new_value traced to the label.",
+            "For missing uses (row_index -1): put complete new rows in add_rows only.",
+            "For true duplicates: list indices in remove_row_indices.",
+            "Current row set (JSON, 0-based indices):",
+            JSON.stringify(rawRows),
+            "Defects to resolve:",
+            JSON.stringify(qcReport.defects || [])
+          ].join("\n")
         }
       ]
     });
-    const corr = await callAnthropic(env, messages, systemBlocks, tools, "emit_use_summary_rows", MODEL_ESCALATED);
-    addUsage(usageTotals, corr.data.usage, MODEL_ESCALATED);
-    messages.push({ role: "assistant", content: corr.data.content });
-    rawRows = corr.toolUse.input?.rows ?? rawRows;
+    try {
+      const corr = await callAnthropic(env, messages, systemBlocks, tools, "emit_row_patches", MODEL_ESCALATED);
+      addUsage(usageTotals, corr.data.usage, MODEL_ESCALATED);
+      messages.push({ role: "assistant", content: corr.data.content });
+      const merged = applyRowPatches(rawRows, corr.toolUse.input || {});
+      rawRows = merged.rows;
+      console.log(`applied ${merged.applied} patch(es), added ${merged.added}, removed ${merged.removed} — ${rawRows.length} row(s) now`);
 
-    await reportStage(env, jobId, fileIndex, `QC recheck (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
-    messages.push({
-      role: "user",
-      content: [
-        { type: "tool_result", tool_use_id: corr.toolUse.id, content: "Received." },
-        { type: "text", text: "Re-run the full 5-pass QC review against the corrected rows." }
-      ]
-    });
-    const recheck = await callAnthropic(env, messages, systemBlocks, tools, "emit_qc_report", MODEL_ESCALATED);
-    addUsage(usageTotals, recheck.data.usage, MODEL_ESCALATED);
-    messages.push({ role: "assistant", content: recheck.data.content });
-    qcReport = recheck.toolUse.input || qcReport;
-    lastToolUseId = recheck.toolUse.id;
+      await reportStage(env, jobId, fileIndex, `QC recheck (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
+      messages.push({
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: corr.toolUse.id, content: "Received." },
+          {
+            type: "text",
+            text: [
+              "Re-run the full 5-pass QC review against the corrected rows below (JSON, 0-based indices):",
+              JSON.stringify(rawRows)
+            ].join("\n")
+          }
+        ]
+      });
+      const recheck = await callAnthropic(env, messages, systemBlocks, tools, "emit_qc_report", MODEL_ESCALATED);
+      addUsage(usageTotals, recheck.data.usage, MODEL_ESCALATED);
+      messages.push({ role: "assistant", content: recheck.data.content });
+      qcReport = recheck.toolUse.input || qcReport;
+      lastToolUseId = recheck.toolUse.id;
+    } catch (err) {
+      console.warn(`remediation cycle ${cycle} aborted — ${err.message}. Keeping ${rawRows.length} row(s).`);
+      break;
+    }
   }
   console.log(cycle > 0
     ? `remediation complete after ${cycle} cycle(s) — final QC status: ${qcReport.overall}.`

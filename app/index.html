@@ -4192,8 +4192,11 @@ const MAX_TOKENS = 64000;
 // to catch the class of error a single-shot extraction misses (evidence
 // borrowed from the wrong crop section, a rate ceiling conflated with an
 // annual cap, a crop named only inside another group's sentence). This cap
-// bounds worst-case latency/cost per document.
-const REMEDIATION_MAX_CYCLES = 2;
+// Pilot stream budget (Cloudflare + TrueFoundry):
+//   extract Sonnet (1) + QC Opus (1) + at most one Opus patch cycle (2) = ≤4
+//   Gateway calls when remediation runs; 2 when QC is clean.
+// Large / multi-file runs auto-route to background (no browser streams).
+const REMEDIATION_MAX_CYCLES = 1;
 
 // Stages 1–2 (extraction, independent QC) use Sonnet for latency on large
 // labels; stage 3 (remediation) uses Opus when QC is Critical/High.
@@ -4202,7 +4205,7 @@ const REMEDIATION_MAX_CYCLES = 2;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-09-22h";
+const PIPELINE_BUILD = "2026-09-22i";
 // Interactive /api/extract streams drop under TrueFoundry+Cloudflare on large
 // labels. Batches and big PDFs auto-route to background jobs (Worker) instead.
 const INTERACTIVE_MAX_FILES = 2;
