@@ -4854,10 +4854,10 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
   let cycle = 0;
   let remediationStepsDone = 0;
   const needsFix = r => r && (r.overall === "Critical" || r.overall === "High");
-  // Row corrections on Sonnet (full re-emit is the timeout hotspot).
-  // QC rechecks stay on Opus per the independent-review path.
-  const remediationModel = MODEL_STANDARD;
-  const remediationLabel = "Sonnet";
+  // Opus corrects defects (escalated remediation). Extraction stays on Sonnet.
+  // If the connection drops, the catch below keeps the extraction rows.
+  const remediationModel = MODEL_ESCALATED;
+  const remediationLabel = "Opus";
   let aborted = false;
   while (needsFix(qcReport) && cycle < REMEDIATION_MAX_CYCLES) {
     cycle++;
@@ -4981,27 +4981,14 @@ async function extractWithLLM(doc, pState) {
   logEl.textContent += `   stage 2/3 — independent QC review (Opus)…\n`;
   const qc = await runQcTurn(extraction.rawRows, doc, pageMarkedText, systemBlocks, tools, pState);
 
-  logEl.textContent += `   stage 3/3 — bounded remediation (up to ${REMEDIATION_MAX_CYCLES} cycle(s))…\n`;
+  logEl.textContent += `   stage 3/3 — bounded remediation on Opus (up to ${REMEDIATION_MAX_CYCLES} cycle(s))…\n`;
   let remediated;
-  const needsRemediation = qc.qcReport
-    && (qc.qcReport.overall === "Critical" || qc.qcReport.overall === "High");
-  const tooLargeToRemediate = (extraction.rawRows || []).length > REMEDIATION_ROW_SKIP_THRESHOLD;
-  if (needsRemediation && tooLargeToRemediate) {
-    // Re-emitting 40–50+ rows mid-flight is what was failing with
-    // "Network connection lost" and wiping the successful extraction.
-    logEl.textContent += `   ⚠ skipping auto-remediation on large table (${extraction.rawRows.length} rows, `
-      + `${(qc.qcReport.defects || []).length} defect(s), ${qc.qcReport.overall}) — `
-      + `returning extraction for human review (pipeline ${PIPELINE_BUILD}).\n`;
-    advanceAiProgress(pState, REMEDIATION_MAX_CYCLES * 2, "remediation skipped (stage 3/3)");
+  try {
+    remediated = await runRemediationLoop(qc, extraction.rawRows, systemBlocks, tools, pState);
+  } catch (err) {
+    logEl.textContent += `   ⚠ remediation failed — ${err.message}. Keeping ${extraction.rawRows.length} row(s) from extraction.\n`;
+    advanceAiProgress(pState, REMEDIATION_MAX_CYCLES * 2, "remediation failed (stage 3/3)");
     remediated = { rawRows: extraction.rawRows, qcReport: qc.qcReport, cycles: 0 };
-  } else {
-    try {
-      remediated = await runRemediationLoop(qc, extraction.rawRows, systemBlocks, tools, pState);
-    } catch (err) {
-      logEl.textContent += `   ⚠ remediation failed — ${err.message}. Keeping ${extraction.rawRows.length} row(s) from extraction.\n`;
-      advanceAiProgress(pState, REMEDIATION_MAX_CYCLES * 2, "remediation failed (stage 3/3)");
-      remediated = { rawRows: extraction.rawRows, qcReport: qc.qcReport, cycles: 0 };
-    }
   }
 
   // Snap to exactly this file's share of the overall bar, regardless of any
