@@ -42,7 +42,7 @@ max_concurrency = 2
 # limits since they share the AUDIT_LOG counters.
 [vars]
 RATE_LIMIT_PER_MINUTE = "20"
-DAILY_BUDGET_USD = "15"
+DAILY_BUDGET_USD = "100"
 AUDIT_TTL_SECONDS = "15552000"
 AZURE_TENANT_ID = "fcb2b37b-5da0-466b-9b83-0014b67a7c78"
 AZURE_CLIENT_ID = "5d0b410a-0b42-4427-8bd5-289c1ac0abce"

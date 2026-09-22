@@ -511,8 +511,8 @@
     <ul class="files" id="fileList" aria-label="Selected files"></ul>
 
     <div class="actions">
-      <button class="primary" id="runBtn" disabled>Run Extraction</button>
-      <button class="ghost" id="runBgBtn" disabled title="Submit for AI extraction on the server — close this tab and come back later to the results">Run in background</button>
+      <button class="primary" id="runBtn" disabled title="Best for 1 small label. For multi-file or large labels, use Run in background.">Run Extraction</button>
+      <button class="ghost" id="runBgBtn" disabled title="Recommended for batches (e.g. 12 labels) and large PDFs — runs on the server; you can close the tab">Run in background</button>
       <button class="ghost" id="clearBtn" disabled>Clear</button>
       <button class="ghost small-target" id="jobHistoryBtn" type="button" title="See past background runs and their status">🕓 Job history</button>
       <label style="display:inline-flex;align-items:center;gap:6px;font-size:0.9em">
@@ -4202,7 +4202,11 @@ const REMEDIATION_MAX_CYCLES = 2;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-09-22g";
+const PIPELINE_BUILD = "2026-09-22h";
+// Interactive /api/extract streams drop under TrueFoundry+Cloudflare on large
+// labels. Batches and big PDFs auto-route to background jobs (Worker) instead.
+const INTERACTIVE_MAX_FILES = 2;
+const INTERACTIVE_MAX_PAGES = 28;
 // Full-table re-emit during remediation can drop the connection on large
 // labels; we still attempt Opus correction and keep extraction rows if it fails.
 const REMEDIATION_ROW_SKIP_THRESHOLD = Infinity;
@@ -5194,14 +5198,24 @@ async function finishRun(documents, totalPages, selectedAi) {
   barEl.style.display = "block";
   setProgress(0);
 
-  // How many documents' AI pipelines run at once. Each document's own
-  // extraction -> validate -> QC -> remediate conversation is still strictly
-  // sequential (it's one multi-turn conversation), but different documents'
-  // conversations are independent, so a batch of files no longer has to wait
-  // for file 1 to fully finish before file 2 even starts. Capped rather than
-  // unbounded so a large batch doesn't throw every request at the mGA relay
-  // at once.
-  const EXTRACTION_CONCURRENCY = 3;
+  // How many documents' AI pipelines run at once in this tab. Cap at 1 on the
+  // TrueFoundry path — parallel long streams through Pages Functions multiply
+  // "Network connection lost" failures (was 3).
+  const EXTRACTION_CONCURRENCY = 1;
+
+  if (useLLM && (
+    documents.length > INTERACTIVE_MAX_FILES
+    || totalPages > INTERACTIVE_MAX_PAGES
+  )) {
+    logEl.textContent += `\n⚠ ${documents.length} file(s), ${totalPages} page(s) — too large for reliable in-tab streaming `
+      + `on the AI Gateway path. Switching to background processing (pipeline ${PIPELINE_BUILD}).\n`;
+    showNotice(
+      `${documents.length} file(s) / ${totalPages} page(s) → running in background so colleagues can close the tab. Reopen this URL to watch progress.`,
+      "ok"
+    );
+    await submitBackgroundJob(documents, totalPages, selectedAi);
+    return;
+  }
 
   // Results are collected here (indexed by original position) instead of
   // pushed straight into allRows as each document finishes, so the exported

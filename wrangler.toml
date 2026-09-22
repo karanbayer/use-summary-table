@@ -40,7 +40,7 @@ queue = "use-summary-jobs"
 # policy, real per-day mGA budget for the shared pilot token).
 [vars]
 RATE_LIMIT_PER_MINUTE = "20"
-DAILY_BUDGET_USD = "15"
+DAILY_BUDGET_USD = "100"
 AUDIT_TTL_SECONDS = "15552000"
 # Non-secret Entra / AI Gateway defaults (secret: AZURE_CLIENT_SECRET only).
 AZURE_TENANT_ID = "fcb2b37b-5da0-466b-9b83-0014b67a7c78"

@@ -24,7 +24,7 @@ import { getGatewayAccessToken, gatewayConfig } from "./_lib/entra.js";
 import { readMessagesStream, withStreamEnabled } from "./_lib/anthropic-stream.js";
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
-const KEEPALIVE_MS = 2000;
+const KEEPALIVE_MS = 1500;
 
 export async function onRequestPost(context) {
   const { request, env, waitUntil } = context;
