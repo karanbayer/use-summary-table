@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
 <title>Use Summary Tables Extractor</title>
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/xlsx.bundle.js"></script>
@@ -4150,6 +4152,11 @@ const REMEDIATION_MAX_CYCLES = 2;
 // /v1/models on global.ai-gateway.int.bayer.ai).
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
+// Bump when changing the interactive AI pipeline so logs prove which build ran.
+const PIPELINE_BUILD = "2026-09-22c";
+// Full-table re-emit during remediation drops the connection on large labels;
+// above this row count we return extraction + QC for human review instead.
+const REMEDIATION_ROW_SKIP_THRESHOLD = 25;
 
 // Progress-bar step budget per document, sized to the worst-case call count:
 // 1 (extraction) + 1 (QC) + up to 2 calls per remediation cycle (correction,
@@ -4847,10 +4854,10 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
   let cycle = 0;
   let remediationStepsDone = 0;
   const needsFix = r => r && (r.overall === "Critical" || r.overall === "High");
-  // Sonnet for remediation on large row sets — Opus full re-emits are the
-  // connection-drop hotspot. Keep Opus only for smaller corrections.
-  const remediationModel = (rawRows || []).length > 25 ? MODEL_STANDARD : MODEL_ESCALATED;
-  const remediationLabel = remediationModel === MODEL_ESCALATED ? "Opus" : "Sonnet";
+  // Always Sonnet for interactive remediation — Opus full re-emits are the
+  // connection-drop hotspot on multi-dozen-row labels.
+  const remediationModel = MODEL_STANDARD;
+  const remediationLabel = "Sonnet";
   let aborted = false;
   while (needsFix(qcReport) && cycle < REMEDIATION_MAX_CYCLES) {
     cycle++;
