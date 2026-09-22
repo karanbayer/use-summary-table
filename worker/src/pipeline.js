@@ -43,8 +43,11 @@ import { getGatewayAccessToken, gatewayConfig } from "./entra.js";
 const MAX_TOKENS = 64000;
 const REMEDIATION_MAX_CYCLES = 2;
 // All AI stages (extraction, independent QC, remediation) use Opus.
-const MODEL_STANDARD = "claude-opus-5";
-const MODEL_ESCALATED = "claude-opus-5";
+// Gateway model IDs are provider-prefixed (confirmed 2026-09-21 against
+// /v1/models on global.ai-gateway.int.bayer.ai) — a bare "claude-opus-5"
+// 403s with "model does not exist" even once auth succeeds.
+const MODEL_STANDARD = "anthropic/claude-opus-5";
+const MODEL_ESCALATED = "anthropic/claude-opus-5";
 const MAX_CHARS = 150000;
 export const JOB_TTL_SECONDS = 7 * 24 * 60 * 60;
 

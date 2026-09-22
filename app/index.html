@@ -4145,8 +4145,11 @@ const MAX_TOKENS = 64000;
 const REMEDIATION_MAX_CYCLES = 2;
 
 // All AI stages (extraction, independent QC, remediation) use Opus.
-const MODEL_STANDARD = "claude-opus-5";
-const MODEL_ESCALATED = "claude-opus-5";
+// Gateway model IDs are provider-prefixed (confirmed 2026-09-21 against
+// /v1/models on global.ai-gateway.int.bayer.ai) — a bare "claude-opus-5"
+// 403s with "model does not exist" even once auth succeeds.
+const MODEL_STANDARD = "anthropic/claude-opus-5";
+const MODEL_ESCALATED = "anthropic/claude-opus-5";
 
 // Progress-bar step budget per document, sized to the worst-case call count:
 // 1 (extraction) + 1 (QC) + up to 2 calls per remediation cycle (correction,
@@ -4373,14 +4376,14 @@ async function callAnthropic(messages, systemBlocks, tools, toolChoiceName, mode
       body
     });
     if (response.ok || !RETRYABLE_STATUS.has(response.status) || attempt === MAX_ATTEMPTS) break;
-    logEl.textContent += `   ⚠ mGA request got ${response.status} (attempt ${attempt}/${MAX_ATTEMPTS}) — retrying…\n`;
+    logEl.textContent += `   ⚠ AI Gateway request got ${response.status} (attempt ${attempt}/${MAX_ATTEMPTS}) — retrying…\n`;
     await sleep(RETRY_BASE_DELAY_MS * attempt);
   }
 
   if (!response.ok) {
     let detail = "";
     try { detail = (await response.json()).error?.message || ""; } catch (_) { /* body wasn't JSON */ }
-    throw new Error(`mGA request failed (${response.status})${detail ? `: ${detail}` : ""}`);
+    throw new Error(`AI Gateway request failed (${response.status})${detail ? `: ${detail}` : ""}`);
   }
 
   const data = await response.json();
@@ -4566,7 +4569,7 @@ async function askChat(question) {
   renderChatMessages();
 
   const body = JSON.stringify({
-    model: "claude-opus-5",
+    model: "anthropic/claude-opus-5",
     max_tokens: 1500,
     system: buildChatSystemBlocks(),
     tools: [buildProposeEditTool()],

@@ -188,14 +188,9 @@ small governance layer (`functions/api/_lib/governance.js`, duplicated at
   in incoming label text. A match never blocks extraction (false positives on real labels
   are likely); it's recorded on that call's audit record for human review. The real
   defense stays the existing human-in-the-loop row review before export.
-- **Model escalation** — extraction (stage 1) and independent QC (stage 2) run on
-  `claude-sonnet-5`; if QC comes back Critical or High, the bounded remediation loop
-  (stage 3) escalates to `claude-opus-5` for its correction + recheck calls — that QC
-  verdict is already the pipeline's built-in signal that a label is a hard case, so only
-  those calls pay Opus's price rather than every label. Cost estimates are priced per
-  call at whichever model actually ran it (`estimateCostUsd(usage, model)`), not one
-  blended Sonnet-only rate, so the daily budget above stays accurate for a file whose
-  remediation escalated.
+- **Model** — extraction, independent QC, and remediation all use
+  `anthropic/claude-opus-5` via Bayer AI Gateway (Entra M2M). Cost estimates are priced per
+  call at that model's rate (`estimateCostUsd(usage, model)`).
 
 None of this fixes the pilot gate itself being a shared secret visible in client-side JS
 (`PILOT_GATE_HEADER_VALUE` in `app/index.html`) — that's a real-auth gap (Entra Agent ID)

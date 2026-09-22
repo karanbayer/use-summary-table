@@ -26,10 +26,10 @@ const DEFAULT_AUDIT_TTL_SECONDS = 180 * 24 * 60 * 60;
 // / app/index.html's remediation loop) prices at Opus rates, not a blended
 // Sonnet-only guess.
 const MODEL_PRICING = {
-  "claude-sonnet-5": { inputPerMtok: 3, outputPerMtok: 15 },
-  "claude-opus-5": { inputPerMtok: 15, outputPerMtok: 75 }
+  "anthropic/claude-sonnet-5": { inputPerMtok: 3, outputPerMtok: 15 },
+  "anthropic/claude-opus-5": { inputPerMtok: 15, outputPerMtok: 75 }
 };
-const DEFAULT_MODEL = "claude-opus-5";
+const DEFAULT_MODEL = "anthropic/claude-opus-5";
 
 // Coarse tripwire only — flags for human review, never blocks. False
 // positives on real label text are likely (labels legitimately contain

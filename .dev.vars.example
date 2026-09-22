@@ -1,8 +1,12 @@
 # Local development environment variables for Cloudflare Pages
 # Copy this to .dev.vars (never commit .dev.vars itself)
 
+# Production path: Entra M2M (AI Gateway)
 AZURE_CLIENT_SECRET=your-entra-client-secret-here
 PILOT_GATE_SECRET=ust-pilot-2026
+
+# Optional emergency fallback only (prefer Entra in production):
+# TFY_API_TOKEN=your-tfy-va-token-here
 
 # Optional overrides (defaults match wrangler.toml / entra.js):
 # AZURE_TENANT_ID=fcb2b37b-5da0-466b-9b83-0014b67a7c78
