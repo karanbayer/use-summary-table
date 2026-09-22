@@ -99,7 +99,7 @@ const KEY_FIELDS = [
 
 const COLUMN_DEFINITIONS = {
   "Reg. #/File Sym": "EPA Registration Number (or File Symbol if pending registration).",
-  "Physical Form": "Type of formulation — WP, SC, Granular, WDG, etc.",
+  "Physical Form": "Formulation code only — WP, SC, SL, EC, Granular, WDG, etc. Never spell out the full name in parentheses (write SL, not SL (soluble liquid)).",
   "Product Name (PBN)": "Primary Brand Name.",
   "Alternative Brand Name (ABN)": "Any alternate brand name(s) the label states for THIS use/section (e.g. a line reading \"ABN: <name>\"), distinct from the one master Product Name (PBN) that is also restated at the end of the label. List every ABN that applies to this row, semicolon-separated if there is more than one. Leave as NS when the label states no ABN for this use.",
   "Use": "The crop, crop group, turf, plantscape, seed treatment, etc. this row applies to — e.g. \"SOYBEAN\", \"CITRUS FRUITS (CROP GROUP 10-10)\", \"Turf\". This is a crop/site name, NOT a description of what the product does (do not write things like \"Herbicide - Weed Control\" here — that belongs in App. Target / Additional Information).",

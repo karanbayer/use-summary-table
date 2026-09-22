@@ -3660,6 +3660,7 @@ groupsEl.addEventListener("click", e => {
 // same way, so Confidence/derived-flag bookkeeping can't drift between the
 // two entry points. Returns false (no-op) when the value is unchanged.
 function commitCellEdit(row, col, value) {
+  value = sanitizeEpaValue(col, value);
   if (value === row[col]) return false;
   row[col] = value;
   row.__edited = row.__edited || {};
@@ -3697,13 +3698,61 @@ groupsEl.addEventListener("keydown", e => {
 searchEl.addEventListener("input", e => renderTable(e.target.value));
 confFilterEl.addEventListener("change", () => renderTable(searchEl.value));
 
-/** Strips internal/review-only fields so exports contain only the 28 schema columns. */
+/** Strips internal/review-only fields so exports contain only the 28 schema columns.
+ *  Also applies EPA-ready value cleanup (no derivation notes, no rate math footnotes,
+ *  Physical Form as acronym only). */
 function exportRows(rows) {
   return rows.map(r => {
     const out = {};
-    SCHEMA.forEach(c => { out[c] = r[c]; });
+    SCHEMA.forEach(c => { out[c] = sanitizeEpaValue(c, r[c]); });
     return out;
   });
+}
+
+/**
+ * Production-ready cell text for EPA submission.
+ * - Drop "(derived…)" / "(D3.10)" annotations the model embeds in values
+ * - Physical Form → acronym only (SL, not "SL (soluble liquid)")
+ * - Rate / count cells → drop trailing math footnotes like "(0.365 x 3 crop seasons)"
+ * Conditional values such as "7 (hay); 21 (grain)" are kept.
+ */
+function sanitizeEpaValue(col, value) {
+  if (value === undefined || value === null) return value;
+  let s = String(value).trim();
+  if (!s || s === NOT_SPECIFIED || s === NOT_APPLICABLE) return s;
+
+  s = s.replace(/\s*\(\s*derived\b[^)]*\)/gi, "").trim();
+  s = s.replace(/\s*\(\s*D\d+(?:\.\d+)?\s*[-–]?\s*[^)]*\)/gi, "").trim();
+
+  if (col === "Physical Form") {
+    const known = s.match(/\b(WP|WSP|SP|SC|WG|WDG|EC|SL|SE|ME|CS|DF|FL|FS|GR|SG|OD|EW|AES|ZC|G|L)\b/i);
+    if (known) return known[1].toUpperCase();
+    const lead = s.match(/^([A-Za-z]{1,5})\s*\(/);
+    if (lead) return lead[1].toUpperCase();
+    return s;
+  }
+
+  const rateLike = /Rate|Apps\/|MRI|PHI|REI|CC\/yr|App Rate/i.test(col);
+  if (rateLike) {
+    // "1.095 (0.365 x 3 crop seasons)" → "1.095"
+    s = s.replace(
+      /^(\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?)\s*\([^)]*(?:[x×*]|\bcrop\s+seasons?\b|\bderived\b|\bcalculat)[^)]*\)\s*$/i,
+      "$1"
+    );
+    // Any remaining trailing math / season footnote on an otherwise clean value
+    s = s.replace(/\s*\([^)]*(?:[x×*]|\bcrop\s+seasons?\b|\bderived\b|\bcalculat)[^)]*\)\s*$/gi, "").trim();
+  }
+
+  return s;
+}
+
+function sanitizeRowForEpa(row) {
+  SCHEMA.forEach(col => {
+    if (row[col] !== undefined && row[col] !== null) {
+      row[col] = sanitizeEpaValue(col, row[col]);
+    }
+  });
+  return row;
 }
 
 /** Export column order — exactly the 28 SCHEMA columns. Source File, Page,
@@ -4084,7 +4133,7 @@ runBgBtn.addEventListener("click", async () => {
 // told the model otherwise.
 const COLUMN_DEFINITIONS = {
   "Reg. #/File Sym": "EPA Registration Number (or File Symbol if pending registration).",
-  "Physical Form": "Type of formulation — WP, SC, Granular, WDG, etc.",
+  "Physical Form": "Formulation code only — WP, SC, SL, EC, Granular, WDG, etc. Never spell out the full name in parentheses (write SL, not SL (soluble liquid)).",
   "Product Name (PBN)": "Primary Brand Name.",
   "Alternative Brand Name (ABN)": "Any alternate brand name(s) the label states for THIS use/section (e.g. a line reading \"ABN: <name>\"), distinct from the one master Product Name (PBN) that is also restated at the end of the label. List every ABN that applies to this row, semicolon-separated if there is more than one. Leave as NS when the label states no ABN for this use.",
   "Use": "The crop, crop group, turf, plantscape, seed treatment, etc. this row applies to — e.g. \"SOYBEAN\", \"CITRUS FRUITS (CROP GROUP 10-10)\", \"Turf\". This is a crop/site name, NOT a description of what the product does (do not write things like \"Herbicide - Weed Control\" here — that belongs in App. Target / Additional Information).",
@@ -4926,7 +4975,9 @@ function buildAppRows(rawRows, doc) {
     const row = blankRow();
     SCHEMA.forEach(col => {
       const v = raw[col];
-      if (v !== undefined && v !== null && String(v).trim() !== "") row[col] = String(v);
+      if (v !== undefined && v !== null && String(v).trim() !== "") {
+        row[col] = sanitizeEpaValue(col, String(v));
+      }
     });
     row["Page"] = raw["Page"] ? String(raw["Page"]) : NOT_SPECIFIED;
     row["Source File"] = doc.fileName;
@@ -5123,6 +5174,7 @@ async function finishRun(documents, totalPages, selectedAi) {
     }
 
     allRows.push(...rows);
+    allRows.slice(-rows.length).forEach(sanitizeRowForEpa);
     if (selectedAi) {
       logEl.textContent += `   active ingredient: ${selectedAi}\n`;
     }
