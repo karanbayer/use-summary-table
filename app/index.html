@@ -4195,7 +4195,8 @@ const MAX_TOKENS = 64000;
 // Pilot stream budget (Cloudflare + TrueFoundry):
 //   extract Sonnet (1) + QC Opus (1) + at most one Opus patch cycle (2) = ≤4
 //   Gateway calls when remediation runs; 2 when QC is clean.
-// Large / multi-file runs auto-route to background (no browser streams).
+// Do not auto-force background — Run Extraction stays interactive; users opt
+// into Worker via "Run in background". Soft-warn above these sizes.
 const REMEDIATION_MAX_CYCLES = 1;
 
 // Stages 1–2 (extraction, independent QC) use Sonnet for latency on large
@@ -4205,11 +4206,11 @@ const REMEDIATION_MAX_CYCLES = 1;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-09-22i";
-// Interactive /api/extract streams drop under TrueFoundry+Cloudflare on large
-// labels. Batches and big PDFs auto-route to background jobs (Worker) instead.
-const INTERACTIVE_MAX_FILES = 2;
-const INTERACTIVE_MAX_PAGES = 28;
+const PIPELINE_BUILD = "2026-09-22j";
+// Soft-warn thresholds only (interactive still proceeds). Prefer background
+// for batches / SIVANTO-class PDFs via the explicit Run in background button.
+const INTERACTIVE_WARN_FILES = 3;
+const INTERACTIVE_WARN_PAGES = 40;
 // Full-table re-emit during remediation can drop the connection on large
 // labels; we still attempt Opus correction and keep extraction rows if it fails.
 const REMEDIATION_ROW_SKIP_THRESHOLD = Infinity;
@@ -5207,17 +5208,15 @@ async function finishRun(documents, totalPages, selectedAi) {
   const EXTRACTION_CONCURRENCY = 1;
 
   if (useLLM && (
-    documents.length > INTERACTIVE_MAX_FILES
-    || totalPages > INTERACTIVE_MAX_PAGES
+    documents.length >= INTERACTIVE_WARN_FILES
+    || totalPages >= INTERACTIVE_WARN_PAGES
   )) {
-    logEl.textContent += `\n⚠ ${documents.length} file(s), ${totalPages} page(s) — too large for reliable in-tab streaming `
-      + `on the AI Gateway path. Switching to background processing (pipeline ${PIPELINE_BUILD}).\n`;
+    logEl.textContent += `\n⚠ ${documents.length} file(s), ${totalPages} page(s) — large for in-tab streaming `
+      + `(pipeline ${PIPELINE_BUILD}). Continuing interactively; use Run in background if the stream drops.\n`;
     showNotice(
-      `${documents.length} file(s) / ${totalPages} page(s) → running in background so colleagues can close the tab. Reopen this URL to watch progress.`,
-      "ok"
+      `${documents.length} file(s) / ${totalPages} page(s) may drop on interactive streaming. Prefer Run in background for batches or large labels.`,
+      "warn"
     );
-    await submitBackgroundJob(documents, totalPages, selectedAi);
-    return;
   }
 
   // Results are collected here (indexed by original position) instead of
