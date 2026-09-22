@@ -491,7 +491,7 @@ async function runQcTurn(env, jobId, fileIndex, rawRows, doc, pageMarkedText, sy
   const messages = [
     { role: "user", content: buildDocMessageBlocks(doc, pageMarkedText, stageText) }
   ];
-  const { data, toolUse } = await callAnthropic(env, messages, systemBlocks, tools, "emit_qc_report");
+  const { data, toolUse } = await callAnthropic(env, messages, systemBlocks, tools, "emit_qc_report", MODEL_ESCALATED);
   addUsage(usageTotals, data.usage);
   messages.push({ role: "assistant", content: data.content });
   return { messages, qcReport: toolUse.input || { overall: "Clean", defects: [] }, lastToolUseId: toolUse.id };
