@@ -4202,7 +4202,7 @@ const REMEDIATION_MAX_CYCLES = 2;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-09-22f";
+const PIPELINE_BUILD = "2026-09-22g";
 // Full-table re-emit during remediation can drop the connection on large
 // labels; we still attempt Opus correction and keep extraction rows if it fails.
 const REMEDIATION_ROW_SKIP_THRESHOLD = Infinity;
@@ -4307,6 +4307,104 @@ function buildQcReportTool() {
   };
 }
 
+// Remediation-only tool — targeted cell fixes + optional add/remove so Opus
+// does not re-emit a full ~50-row table (that hit max_tokens=64000 and aborted).
+function buildRowPatchesTool() {
+  const rowProperties = {};
+  SCHEMA.forEach(col => {
+    rowProperties[col] = { type: "string" };
+    if (COLUMN_DEFINITIONS[col]) rowProperties[col].description = COLUMN_DEFINITIONS[col];
+  });
+  rowProperties["Page"] = {
+    type: "string",
+    description: "1-based page number this row's use is found on."
+  };
+  rowProperties["Evidence"] = {
+    type: "string",
+    description: "Short verbatim phrase from the label supporting this row."
+  };
+
+  return {
+    name: "emit_row_patches",
+    description: "Apply targeted corrections during remediation. Prefer patches over re-emitting the whole table. Use add_rows only for genuinely missing uses; use remove_row_indices for true duplicates.",
+    input_schema: {
+      type: "object",
+      properties: {
+        patches: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              row_index: {
+                type: "integer",
+                description: "0-based index into the current row set."
+              },
+              column: { type: "string", enum: SCHEMA.concat(["Page", "Evidence"]) },
+              new_value: { type: "string" },
+              reason: { type: "string" }
+            },
+            required: ["row_index", "column", "new_value"]
+          }
+        },
+        add_rows: {
+          type: "array",
+          description: "Full rows to append for missing uses only.",
+          items: {
+            type: "object",
+            properties: rowProperties,
+            required: SCHEMA.concat(["Page"])
+          }
+        },
+        remove_row_indices: {
+          type: "array",
+          items: { type: "integer" },
+          description: "0-based indices of rows to drop (duplicates / erroneous)."
+        }
+      },
+      required: ["patches"]
+    }
+  };
+}
+
+function applyRowPatches(rawRows, patchInput) {
+  let rows = (rawRows || []).map(r => ({ ...r }));
+  const patches = patchInput?.patches || [];
+  let applied = 0;
+  patches.forEach(p => {
+    const idx = Number(p.row_index);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= rows.length) return;
+    const col = p.column;
+    if (!col) return;
+    if (!SCHEMA.includes(col) && col !== "Page" && col !== "Evidence") return;
+    rows[idx][col] = sanitizeEpaValue(col, p.new_value);
+    applied++;
+  });
+
+  const remove = new Set(
+    (patchInput?.remove_row_indices || [])
+      .map(Number)
+      .filter(i => Number.isInteger(i) && i >= 0 && i < rows.length)
+  );
+  if (remove.size) rows = rows.filter((_, i) => !remove.has(i));
+
+  const added = [];
+  (patchInput?.add_rows || []).forEach(add => {
+    const row = {};
+    SCHEMA.forEach(c => {
+      const v = add[c];
+      row[c] = v !== undefined && v !== null && String(v).trim() !== ""
+        ? sanitizeEpaValue(c, String(v))
+        : NOT_SPECIFIED;
+    });
+    if (add.Page) row.Page = String(add.Page);
+    if (add.Evidence) row.Evidence = String(add.Evidence);
+    rows.push(row);
+    added.push(row);
+  });
+
+  return { rows, applied, added: added.length, removed: remove.size };
+}
+
 // Chat-only tool (see askChat) — deliberately NOT part of buildTools()
 // below, which is the extraction/QC/remediation pipeline's own array and
 // must stay byte-identical across those calls for cache reasons. The chat
@@ -4339,13 +4437,10 @@ function buildProposeEditTool() {
 }
 
 function buildTools() {
-  // Both tool schemas are sent on every call, regardless of stage —
-  // tool_choice forces which one actually fires. Keeping the tools array
-  // byte-identical across every call in the pipeline (extraction, QC,
-  // remediation) is what lets the knowledge-block cache breakpoint below
-  // survive across stages instead of invalidating every time the forced
-  // tool changes.
-  return [buildRowSchemaTool(), buildQcReportTool()];
+  // All three tool schemas are sent on every call — tool_choice forces which
+  // one fires. Keeping the tools array byte-identical across extraction, QC,
+  // and remediation preserves the knowledge-block cache breakpoint.
+  return [buildRowSchemaTool(), buildQcReportTool(), buildRowPatchesTool()];
 }
 
 // Single cache breakpoint on the entire knowledge base (rules + schema +
@@ -4609,6 +4704,11 @@ async function callAnthropic(messages, systemBlocks, tools, toolChoiceName, mode
       if (toolChoiceName === "emit_use_summary_rows" && !Array.isArray(toolUse.input?.rows)) {
         throw new Error(
           `Extraction tool returned no rows array (stream may have been truncated; stop_reason=${data.stop_reason || "unknown"}, output_tokens=${data.usage?.output_tokens ?? "?"}).`
+        );
+      }
+      if (toolChoiceName === "emit_row_patches" && !Array.isArray(toolUse.input?.patches)) {
+        throw new Error(
+          `Remediation tool returned no patches array (stream may have been truncated; stop_reason=${data.stop_reason || "unknown"}, output_tokens=${data.usage?.output_tokens ?? "?"}).`
         );
       }
       return { data, toolUse };
@@ -4896,15 +4996,13 @@ async function runQcTurn(rawRows, doc, pageMarkedText, systemBlocks, tools, pSta
 // Stage 3 — bounded remediation loop: only engages when QC found Critical/
 // High defects, and never blocks — whatever the final QC report says, rows
 // and report both flow through to rendering/export (see finishRun).
-// Opus on a full ~50-row re-emit can drop the connection on large labels;
-// failures here must not discard the extraction/QC rows already in hand.
+// Opus applies targeted patches (not a full-table re-emit) so large labels
+// stay under the output-token limit; failures keep extraction rows.
 async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
   let { messages, qcReport, lastToolUseId } = state;
   let cycle = 0;
   let remediationStepsDone = 0;
   const needsFix = r => r && (r.overall === "Critical" || r.overall === "High");
-  // Opus corrects defects (escalated remediation). Extraction stays on Sonnet.
-  // If the connection drops, the catch below keeps the extraction rows.
   const remediationModel = MODEL_ESCALATED;
   const remediationLabel = "Opus";
   let aborted = false;
@@ -4918,14 +5016,28 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
         { type: "tool_result", tool_use_id: lastToolUseId, content: "Received." },
         {
           type: "text",
-          text: `Correct the rows to resolve every defect below, then re-emit the complete corrected row set (not just the changed rows):\n${JSON.stringify(qcReport.defects || [])}`
+          text: [
+            "Correct the defects below using emit_row_patches — do NOT re-emit the full table.",
+            "For each cell defect: one patch with row_index, column, and new_value traced to the label.",
+            "For missing uses (row_index -1): put complete new rows in add_rows only.",
+            "For true duplicates: list indices in remove_row_indices.",
+            "Current row set (JSON, 0-based indices):",
+            JSON.stringify(rawRows),
+            "Defects to resolve:",
+            JSON.stringify(qcReport.defects || [])
+          ].join("\n")
         }
       ]
     });
     try {
-      const corr = await callAnthropic(messages, systemBlocks, tools, "emit_use_summary_rows", remediationModel);
+      const corr = await callAnthropic(messages, systemBlocks, tools, "emit_row_patches", remediationModel);
       messages.push({ role: "assistant", content: corr.data.content });
-      rawRows = corr.toolUse.input?.rows ?? rawRows;
+      const merged = applyRowPatches(rawRows, corr.toolUse.input || {});
+      rawRows = merged.rows;
+      logEl.textContent += `   applied ${merged.applied} patch(es)`
+        + (merged.added ? `, added ${merged.added} row(s)` : "")
+        + (merged.removed ? `, removed ${merged.removed} row(s)` : "")
+        + ` — ${rawRows.length} row(s) now\n`;
       remediationStepsDone++;
       advanceAiProgress(pState, 1, `remediation correction applied (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
 
@@ -4934,7 +5046,13 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
         role: "user",
         content: [
           { type: "tool_result", tool_use_id: corr.toolUse.id, content: "Received." },
-          { type: "text", text: "Re-run the full 5-pass QC review against the corrected rows." }
+          {
+            type: "text",
+            text: [
+              "Re-run the full 5-pass QC review against the corrected rows below (JSON, 0-based indices):",
+              JSON.stringify(rawRows)
+            ].join("\n")
+          }
         ]
       });
       const recheck = await callAnthropic(messages, systemBlocks, tools, "emit_qc_report", MODEL_ESCALATED);
