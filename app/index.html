@@ -216,7 +216,13 @@
   .job-file-status { color: var(--muted); font-size: 13px; }
   .job-file-status.error { color: #b42318; }
   .job-file-status.done { color: var(--ok); }
-  .job-file-retry { padding: 6px 12px; font-size: 13px; }
+  .job-file-status.cancelled { color: #7a2e0e; }
+  .job-file-retry, .job-cancel-btn { padding: 6px 12px; font-size: 13px; }
+  .job-files-toolbar {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 10px; margin-bottom: 10px; flex-wrap: wrap;
+  }
+  .job-files-toolbar strong { font-size: 13.5px; }
   .qc-defects li { margin-bottom: 4px; }
 
   .job-history-panel {
@@ -871,10 +877,41 @@ function renderJobHistoryPanel() {
     `<div class="job-history-row">`
     + `<span class="job-history-id"><code>${esc(j.id)}</code></span>`
     + `<span class="job-history-age">${esc(formatJobAge(j.submittedAt))}</span>`
+    + `<button type="button" class="ghost small-target job-history-cancel" data-job-id="${esc(j.id)}">Cancel</button>`
     + `<a href="?job=${encodeURIComponent(j.id)}">View</a>`
     + `</div>`
   )).join("");
 }
+
+jobHistoryList.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".job-history-cancel");
+  if (!btn) return;
+  e.preventDefault();
+  const jobId = btn.dataset.jobId;
+  if (!jobId) return;
+  if (!confirm(`Cancel background job ${jobId}? Queued files stop immediately; a file mid-AI-call finishes that call then stops.`)) return;
+  btn.disabled = true;
+  btn.textContent = "Cancelling…";
+  try {
+    const result = await cancelBackgroundJob(jobId);
+    if (result.alreadySettled) {
+      showNotice(`Job ${jobId} already finished — nothing to cancel.`, "ok");
+      btn.textContent = "Cancel";
+      btn.disabled = false;
+    } else {
+      showNotice(`Cancel requested for job ${jobId}.`, "ok");
+      const viewing = new URLSearchParams(window.location.search).get("job");
+      if (viewing === jobId) {
+        stopJobPoll();
+        pollJobStatus(jobId, currentJobRunContext);
+      }
+    }
+  } catch (err) {
+    showNotice(`Could not cancel job: ${err.message}`, "error");
+    btn.disabled = false;
+    btn.textContent = "Cancel";
+  }
+});
 
 jobHistoryBtn.addEventListener("click", () => {
   const opening = jobHistoryPanel.style.display === "none";
@@ -5396,26 +5433,32 @@ function stopJobPoll() {
 // the same document context the original run used — see renderJobStatusView.
 let currentJobRunContext = null;
 
-// Renders a per-file status list with a Retry button for any file that
-// errored out (e.g. a sustained mGA 524) — kept visible both while a job is
-// still polling and after it settles, since hydrateFromJob hides the plain-
-// text placeholder log once results render, and errored files would
-// otherwise have no way to be re-run without resubmitting the whole batch.
+// Renders a per-file status list. Shows Cancel while the job is still
+// running (or cancelling). Retry remains available for errored files only.
 function renderJobFilesPanel(job, jobId) {
+  const active = job.status === "processing" || job.status === "cancelling";
   const hasError = job.files.some(f => f.status === "error");
-  if (!hasError) {
+  if (!active && !hasError && job.status !== "cancelled") {
     jobFilesPanelEl.style.display = "none";
     jobFilesPanelEl.innerHTML = "";
     return;
   }
   jobFilesPanelEl.dataset.jobId = jobId;
-  jobFilesPanelEl.innerHTML = job.files.map(f => {
+  const cancelBtn = active
+    ? `<button type="button" class="ghost job-cancel-btn" data-action="cancel-job">Cancel job</button>`
+    : "";
+  const toolbar = `<div class="job-files-toolbar">`
+    + `<strong>${job.status === "cancelled" ? "Cancelled" : job.status === "cancelling" ? "Cancelling…" : "Background files"}</strong>`
+    + cancelBtn
+    + `</div>`;
+  const rows = job.files.map(f => {
     const name = esc(f.fileName || `file ${f.fileIndex + 1}`);
     const statusText = f.status === "done" ? "done"
       : f.status === "error" ? `error — ${esc(f.error || "unknown error")}`
+      : f.status === "cancelled" ? "cancelled"
       : f.status === "processing" ? esc(f.stage || "processing")
       : "queued";
-    const retryBtn = f.status === "error"
+    const retryBtn = f.status === "error" && !job.cancelled
       ? `<button type="button" class="ghost job-file-retry" data-file-index="${f.fileIndex}">Retry</button>`
       : "";
     return `<div class="job-file-row">`
@@ -5424,10 +5467,44 @@ function renderJobFilesPanel(job, jobId) {
       + retryBtn
       + `</div>`;
   }).join("");
+  jobFilesPanelEl.innerHTML = toolbar + rows;
   jobFilesPanelEl.style.display = "block";
 }
 
+async function cancelBackgroundJob(jobId) {
+  const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-ust-pilot": PILOT_GATE_HEADER_VALUE },
+    body: "{}"
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error?.message || `HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
 jobFilesPanelEl.addEventListener("click", async (e) => {
+  const cancelBtn = e.target.closest("[data-action='cancel-job']");
+  if (cancelBtn) {
+    const jobId = jobFilesPanelEl.dataset.jobId;
+    if (!jobId) return;
+    if (!confirm(`Cancel background job ${jobId}? Queued files stop immediately; a file mid-AI-call finishes that call then stops.`)) return;
+    cancelBtn.disabled = true;
+    cancelBtn.textContent = "Cancelling…";
+    try {
+      await cancelBackgroundJob(jobId);
+      showNotice(`Cancel requested — waiting for in-flight AI calls to finish their current stage.`, "ok");
+      stopJobPoll();
+      pollJobStatus(jobId, currentJobRunContext);
+    } catch (err) {
+      cancelBtn.disabled = false;
+      cancelBtn.textContent = "Cancel job";
+      showNotice(`Could not cancel job: ${err.message}`, "error");
+    }
+    return;
+  }
+
   const btn = e.target.closest(".job-file-retry");
   if (!btn) return;
   const jobId = jobFilesPanelEl.dataset.jobId;
@@ -5534,6 +5611,7 @@ function formatJobStatusLog(job) {
   return job.files.map(f => {
     const label = f.status === "done" ? "done"
       : f.status === "error" ? `error — ${f.error || "unknown error"}`
+      : f.status === "cancelled" ? "cancelled"
       : f.status === "processing" ? (f.stage || "processing")
       : "queued";
     return `${f.fileName || `file ${f.fileIndex + 1}`}: ${label}`;
@@ -5578,12 +5656,23 @@ function hydrateFromJob(job, runContext) {
   statusEl.textContent = qcReport.passed
     ? `Done — background job ${job.jobId}: ${job.totalFiles} document(s), ${allRows.length} row(s).`
     : `Done — background job ${job.jobId}: ${job.totalFiles} document(s), ${allRows.length} row(s). QC defects found — review before using.`;
+  if (job.status === "cancelled" || job.cancelled) {
+    statusEl.textContent = `Cancelled — background job ${job.jobId}: ${allRows.length} row(s) from finished file(s) before cancel.`;
+    noticeTx.textContent = allRows.length
+      ? `Job cancelled. Showing ${allRows.length} row(s) from file(s) that finished before cancel.`
+      : `Job cancelled. No files finished before cancel.`;
+    noticeIc.textContent = "⚠";
+    noticeEl.classList.add("error");
+    noticeEl.classList.remove("ok");
+    noticeEl.style.display = "flex";
+  } else {
   noticeTx.textContent = !qcReport.passed
     ? `Background job complete with ${qcReport.defects.length} QC defect(s). Review the flagged issues before using results.`
     : `Background job complete. ${allRows.length} use row(s) from ${job.totalFiles} document(s).`;
   noticeIc.textContent = qcReport.passed ? "✔" : "⚠";
   noticeEl.classList.toggle("error", !qcReport.passed);
   noticeEl.style.display = "flex";
+  }
 
   // Review stations disabled for the time being — see the in-tab finishRun() path.
   showResults();
@@ -5611,13 +5700,18 @@ async function pollJobStatus(jobId, runContext) {
     return;
   }
 
-  const doneCount = job.files.filter(f => f.status === "done" || f.status === "error").length;
-  placeholderEl.textContent = `Background job ${jobId}: ${doneCount} of ${job.totalFiles} file(s) settled.\n\n${formatJobStatusLog(job)}`;
-  statusEl.textContent = `Background job ${jobId}: ${doneCount} of ${job.totalFiles} file(s) settled.`;
+  const doneCount = job.files.filter(f =>
+    f.status === "done" || f.status === "error" || f.status === "cancelled"
+  ).length;
+  const statusLabel = job.status === "cancelling" ? "cancelling…"
+    : job.status === "cancelled" ? "cancelled"
+    : `${doneCount} of ${job.totalFiles} file(s) settled`;
+  placeholderEl.textContent = `Background job ${jobId}: ${statusLabel}.\n\n${formatJobStatusLog(job)}`;
+  statusEl.textContent = `Background job ${jobId}: ${statusLabel}.`;
   setProgress((doneCount / job.totalFiles) * 100);
   renderJobFilesPanel(job, jobId);
 
-  if (job.status === "processing") {
+  if (job.status === "processing" || job.status === "cancelling") {
     jobPollTimer = setTimeout(() => pollJobStatus(jobId, runContext), 5000);
     return;
   }

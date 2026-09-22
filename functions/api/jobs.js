@@ -12,9 +12,10 @@
 //
 // KV schema (shared with worker/src/index.js — keep in sync if you change
 // either side):
-//   job:<jobId>:meta            { jobId, createdAt, totalFiles }
+//   job:<jobId>:meta            { jobId, createdAt, totalFiles, cancelled?, cancelledAt? }
 //   job:<jobId>:input:<fileIndex>  { fileName, pageMarkedText, selectedAi }
 //   job:<jobId>:file:<fileIndex>   { fileName, status, stage?, rows?, qcReport?, error? }
+//   status values: queued | processing | done | error | cancelled
 //
 // A single failed file can be re-enqueued without resubmitting the whole
 // batch via jobs/[id]/retry.js, which reuses the input this function wrote.

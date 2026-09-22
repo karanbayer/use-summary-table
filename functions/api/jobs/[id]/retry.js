@@ -47,6 +47,19 @@ export async function onRequestPost(context) {
     });
   }
 
+  const metaText = await env.JOBS.get(`job:${jobId}:meta`);
+  if (metaText) {
+    const meta = JSON.parse(metaText);
+    if (meta.cancelled) {
+      return new Response(JSON.stringify({
+        error: { message: "This job was cancelled — start a new background run instead of retrying." }
+      }), {
+        status: 409,
+        headers: { "content-type": "application/json" }
+      });
+    }
+  }
+
   const fileKey = `job:${jobId}:file:${fileIndex}`;
   const inputKey = `job:${jobId}:input:${fileIndex}`;
 

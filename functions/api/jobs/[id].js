@@ -38,14 +38,20 @@ export async function onRequestGet(context) {
     files.push(fileText ? { fileIndex, ...JSON.parse(fileText) } : { fileIndex, status: "queued" });
   }
 
-  const allSettled = files.every(f => f.status === "done" || f.status === "error");
+  const settled = (s) => s === "done" || s === "error" || s === "cancelled";
+  const allSettled = files.every(f => settled(f.status));
   const anyError = files.some(f => f.status === "error");
-  const status = !allSettled ? "processing" : (anyError ? "done_with_errors" : "done");
+  const anyCancelled = meta.cancelled || files.some(f => f.status === "cancelled");
+  const status = !allSettled
+    ? (meta.cancelled ? "cancelling" : "processing")
+    : (anyCancelled ? "cancelled" : (anyError ? "done_with_errors" : "done"));
 
   return new Response(JSON.stringify({
     jobId,
     createdAt: meta.createdAt,
     totalFiles: meta.totalFiles,
+    cancelled: !!meta.cancelled,
+    cancelledAt: meta.cancelledAt || null,
     status,
     files
   }), {

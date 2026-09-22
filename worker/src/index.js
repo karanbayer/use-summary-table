@@ -16,9 +16,23 @@
 // checks and logs its own calls; this is the equivalent for the background
 // path, using the SAME AUDIT_LOG namespace so the two share one cumulative
 // daily total and one kill-switch flag.
+//
+// Cancellation: POST /api/jobs/<id>/cancel sets meta.cancelled. Queued files
+// are marked cancelled immediately; this Worker checks assertNotCancelled
+// before starting and between pipeline stages so mid-run work stops after
+// the current Gateway call finishes.
 
-import { extractWithLLM, JOB_TTL_SECONDS } from "./pipeline.js";
+import {
+  extractWithLLM,
+  JOB_TTL_SECONDS,
+  JobCancelledError,
+  assertNotCancelled
+} from "./pipeline.js";
 import { checkKillSwitch, checkBudget, recordUsage, recordAudit } from "./governance.js";
+
+function isCancelledError(err) {
+  return err instanceof JobCancelledError || err?.name === "JobCancelledError";
+}
 
 async function writeFileResult(env, jobId, fileIndex, patch) {
   const key = `job:${jobId}:file:${fileIndex}`;
@@ -44,6 +58,24 @@ async function processMessage(env, jobId, fileIndex) {
 
   const { fileName, pageMarkedText } = JSON.parse(inputText);
   const doc = { fileName };
+
+  // Job cancelled while this message was still queued — skip without calling
+  // the Gateway (cancel API already marks queued files; this covers races).
+  try {
+    await assertNotCancelled(env, jobId);
+  } catch (err) {
+    if (isCancelledError(err)) {
+      console.log(`${fileName} (job ${jobId}, file ${fileIndex}): cancelled before start`);
+      await recordAudit(env, { source: "job", jobId, fileIndex, status: "cancelled" });
+      await writeFileResult(env, jobId, fileIndex, {
+        fileName,
+        status: "cancelled",
+        error: "Cancelled by user"
+      });
+      return;
+    }
+    throw err;
+  }
 
   // Re-checked here (not just at jobs.js submission time) because a queued
   // file can sit for a while before this Worker picks it up — an incident
@@ -73,6 +105,8 @@ async function processMessage(env, jobId, fileIndex) {
   try {
     await writeFileResult(env, jobId, fileIndex, { fileName, status: "processing" });
     const { rows, qcReport, usage, remediationCycles } = await extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText);
+    // Final check — cancel may have landed during the last Gateway call.
+    await assertNotCancelled(env, jobId);
     await recordUsage(env, usage);
     await recordAudit(env, {
       source: "job",
@@ -88,6 +122,22 @@ async function processMessage(env, jobId, fileIndex) {
     });
     await writeFileResult(env, jobId, fileIndex, { fileName, status: "done", rows, qcReport });
   } catch (err) {
+    if (isCancelledError(err)) {
+      console.log(`${fileName} (job ${jobId}, file ${fileIndex}): cancelled mid-run`);
+      await recordAudit(env, {
+        source: "job",
+        jobId,
+        fileIndex,
+        status: "cancelled",
+        durationMs: Date.now() - startedAt
+      });
+      await writeFileResult(env, jobId, fileIndex, {
+        fileName,
+        status: "cancelled",
+        error: "Cancelled by user"
+      });
+      return;
+    }
     console.error(`${fileName} (job ${jobId}, file ${fileIndex}) failed: ${err.message}`);
     await recordAudit(env, { source: "job", jobId, fileIndex, status: "error", durationMs: Date.now() - startedAt });
     await writeFileResult(env, jobId, fileIndex, { fileName, status: "error", error: err.message });

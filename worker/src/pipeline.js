@@ -51,6 +51,21 @@ const MODEL_ESCALATED = "anthropic/claude-opus-5";
 const MAX_CHARS = 150000;
 export const JOB_TTL_SECONDS = 7 * 24 * 60 * 60;
 
+/** Thrown when job:<jobId>:meta.cancelled is set — stop remaining stages. */
+export class JobCancelledError extends Error {
+  constructor(jobId) {
+    super(`Job ${jobId} was cancelled`);
+    this.name = "JobCancelledError";
+  }
+}
+
+export async function assertNotCancelled(env, jobId) {
+  const metaText = await env.JOBS.get(`job:${jobId}:meta`);
+  if (!metaText) return;
+  const meta = JSON.parse(metaText);
+  if (meta.cancelled) throw new JobCancelledError(jobId);
+}
+
 const SCHEMA = [
   // Product
   "Reg. #/File Sym",
@@ -150,6 +165,7 @@ function scoreRow(row) {
 
 /** Merges {status:"processing", stage} into the file's KV record. */
 export async function reportStage(env, jobId, fileIndex, stage) {
+  await assertNotCancelled(env, jobId);
   const key = `job:${jobId}:file:${fileIndex}`;
   const existingText = await env.JOBS.get(key);
   const existing = existingText ? JSON.parse(existingText) : {};
@@ -551,6 +567,7 @@ async function runExtractionTurn(env, jobId, fileIndex, doc, pageMarkedText, sys
     { role: "user", content: buildDocMessageBlocks(doc, pageMarkedText, stageText) }
   ];
   const { data, toolUse } = await callAnthropic(env, messages, systemBlocks, tools, "emit_use_summary_rows");
+  await assertNotCancelled(env, jobId);
   addUsage(usageTotals, data.usage);
   messages.push({ role: "assistant", content: data.content });
   return { messages, rawRows: toolUse.input?.rows ?? [], lastToolUseId: toolUse.id };
@@ -569,6 +586,7 @@ async function runQcTurn(env, jobId, fileIndex, rawRows, doc, pageMarkedText, sy
     { role: "user", content: buildDocMessageBlocks(doc, pageMarkedText, stageText) }
   ];
   const { data, toolUse } = await callAnthropic(env, messages, systemBlocks, tools, "emit_qc_report", MODEL_ESCALATED);
+  await assertNotCancelled(env, jobId);
   addUsage(usageTotals, data.usage);
   messages.push({ role: "assistant", content: data.content });
   return { messages, qcReport: toolUse.input || { overall: "Clean", defects: [] }, lastToolUseId: toolUse.id };
@@ -606,6 +624,7 @@ async function runRemediationLoop(env, jobId, fileIndex, state, rawRows, systemB
     });
     try {
       const corr = await callAnthropic(env, messages, systemBlocks, tools, "emit_row_patches", MODEL_ESCALATED);
+      await assertNotCancelled(env, jobId);
       addUsage(usageTotals, corr.data.usage, MODEL_ESCALATED);
       messages.push({ role: "assistant", content: corr.data.content });
       const merged = applyRowPatches(rawRows, corr.toolUse.input || {});
@@ -627,11 +646,13 @@ async function runRemediationLoop(env, jobId, fileIndex, state, rawRows, systemB
         ]
       });
       const recheck = await callAnthropic(env, messages, systemBlocks, tools, "emit_qc_report", MODEL_ESCALATED);
+      await assertNotCancelled(env, jobId);
       addUsage(usageTotals, recheck.data.usage, MODEL_ESCALATED);
       messages.push({ role: "assistant", content: recheck.data.content });
       qcReport = recheck.toolUse.input || qcReport;
       lastToolUseId = recheck.toolUse.id;
     } catch (err) {
+      if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;
       console.warn(`remediation cycle ${cycle} aborted — ${err.message}. Keeping ${rawRows.length} row(s).`);
       break;
     }
@@ -683,6 +704,7 @@ function buildAppRows(rawRows, doc) {
 // app/index.html's extractWithLLM (the in-tab path), adapted to report
 // progress into KV instead of a DOM progress bar.
 export async function extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText) {
+  await assertNotCancelled(env, jobId);
   if (pageMarkedText.length > MAX_CHARS) {
     console.warn(`${doc.fileName} is ${pageMarkedText.length.toLocaleString()} characters — `
       + `above the ~${MAX_CHARS.toLocaleString()}-character single-call guideline; sending the full text anyway (no chunking in v1).`);
