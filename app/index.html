@@ -4353,6 +4353,11 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function isRetryableNetworkError(err) {
+  const msg = String(err && err.message || err || "");
+  return /network connection lost|failed to fetch|networkerror|load failed|aborted|econnreset|econnrefused|etimedout/i.test(msg);
+}
+
 // Reassemble Anthropic Messages SSE (from /api/extract streaming relay) into
 // the non-streaming { stop_reason, content } shape used by the rest of the pipeline.
 async function readMessagesStream(response) {
@@ -4493,53 +4498,72 @@ async function callAnthropic(messages, systemBlocks, tools, toolChoiceName, mode
     stream: true
   });
 
-  let response;
+  let lastErr;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    response = await fetch(RELAY_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        // A static pilot-gate header, not a secret — deters scanners from
-        // hitting the public relay endpoint, since it proxies to a metered API.
-        "x-ust-pilot": PILOT_GATE_HEADER_VALUE
-      },
-      body
-    });
-    if (response.ok || !RETRYABLE_STATUS.has(response.status) || attempt === MAX_ATTEMPTS) break;
-    logEl.textContent += `   ⚠ AI Gateway request got ${response.status} (attempt ${attempt}/${MAX_ATTEMPTS}) — retrying…\n`;
-    await sleep(RETRY_BASE_DELAY_MS * attempt);
-  }
+    let response;
+    try {
+      response = await fetch(RELAY_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          // A static pilot-gate header, not a secret — deters scanners from
+          // hitting the public relay endpoint, since it proxies to a metered API.
+          "x-ust-pilot": PILOT_GATE_HEADER_VALUE
+        },
+        body
+      });
+    } catch (err) {
+      lastErr = err;
+      if (!isRetryableNetworkError(err) || attempt === MAX_ATTEMPTS) throw err;
+      logEl.textContent += `   ⚠ network error (attempt ${attempt}/${MAX_ATTEMPTS}): ${err.message} — retrying…\n`;
+      await sleep(RETRY_BASE_DELAY_MS * attempt);
+      continue;
+    }
 
-  if (!response.ok) {
-    let detail = "";
-    try { detail = (await response.json()).error?.message || ""; } catch (_) { /* body wasn't JSON */ }
-    throw new Error(`AI Gateway request failed (${response.status})${detail ? `: ${detail}` : ""}`);
-  }
+    if (!response.ok) {
+      if (!RETRYABLE_STATUS.has(response.status) || attempt === MAX_ATTEMPTS) {
+        let detail = "";
+        try { detail = (await response.json()).error?.message || ""; } catch (_) { /* body wasn't JSON */ }
+        throw new Error(`AI Gateway request failed (${response.status})${detail ? `: ${detail}` : ""}`);
+      }
+      logEl.textContent += `   ⚠ AI Gateway request got ${response.status} (attempt ${attempt}/${MAX_ATTEMPTS}) — retrying…\n`;
+      await sleep(RETRY_BASE_DELAY_MS * attempt);
+      continue;
+    }
 
-  let data;
-  if (response.headers.get("x-ust-result") === "1") {
-    data = await readUstResultStream(response);
-  } else {
-    const isStream = (response.headers.get("content-type") || "").includes("text/event-stream")
-      || response.headers.get("x-ust-stream") === "1";
-    data = isStream ? await readMessagesStream(response) : await response.json();
+    try {
+      let data;
+      if (response.headers.get("x-ust-result") === "1") {
+        data = await readUstResultStream(response);
+      } else {
+        const isStream = (response.headers.get("content-type") || "").includes("text/event-stream")
+          || response.headers.get("x-ust-stream") === "1";
+        data = isStream ? await readMessagesStream(response) : await response.json();
+      }
+      if (data.stop_reason === "max_tokens") {
+        // The tool-use JSON may be cut off mid-row — surface this rather than
+        // silently presenting a possibly-truncated row set as complete.
+        logEl.textContent += `   ⚠ response hit the ${MAX_TOKENS}-token output limit for this turn — output may be truncated.\n`;
+      }
+      const toolUse = (data.content || []).find(b => b.type === "tool_use" && b.name === toolChoiceName);
+      if (!toolUse) throw new Error(`Model response did not include the expected structured output (${toolChoiceName}).`);
+      // Empty/missing rows after a "successful" tool_use usually means the SSE
+      // was truncated before input_json_delta finished — do not treat as a real
+      // zero-row label (that path previously looked "successful" with 0 rows).
+      if (toolChoiceName === "emit_use_summary_rows" && !Array.isArray(toolUse.input?.rows)) {
+        throw new Error(
+          `Extraction tool returned no rows array (stream may have been truncated; stop_reason=${data.stop_reason || "unknown"}, output_tokens=${data.usage?.output_tokens ?? "?"}).`
+        );
+      }
+      return { data, toolUse };
+    } catch (err) {
+      lastErr = err;
+      if (!isRetryableNetworkError(err) || attempt === MAX_ATTEMPTS) throw err;
+      logEl.textContent += `   ⚠ stream dropped (attempt ${attempt}/${MAX_ATTEMPTS}): ${err.message} — retrying…\n`;
+      await sleep(RETRY_BASE_DELAY_MS * attempt);
+    }
   }
-  if (data.stop_reason === "max_tokens") {
-    // The tool-use JSON may be cut off mid-row — surface this rather than
-    // silently presenting a possibly-truncated row set as complete.
-    logEl.textContent += `   ⚠ response hit the ${MAX_TOKENS}-token output limit for this turn — output may be truncated.\n`;
-  }
-  const toolUse = (data.content || []).find(b => b.type === "tool_use" && b.name === toolChoiceName);
-  if (!toolUse) throw new Error(`Model response did not include the expected structured output (${toolChoiceName}).`);
-  // Empty/missing rows after a "successful" tool_use usually means the SSE
-  // was truncated before input_json_delta finished — do not treat as a real
-  // zero-row label (that path previously looked "successful" with 0 rows).
-  if (toolChoiceName === "emit_use_summary_rows" && !Array.isArray(toolUse.input?.rows)) {
-    throw new Error(
-      `Extraction tool returned no rows array (stream may have been truncated; stop_reason=${data.stop_reason || "unknown"}, output_tokens=${data.usage?.output_tokens ?? "?"}).`
-    );
-  }
-  return { data, toolUse };
+  throw lastErr || new Error("AI Gateway request failed after retries");
 }
 
 /* ------------------------------------------------------------------
@@ -4816,14 +4840,22 @@ async function runQcTurn(rawRows, doc, pageMarkedText, systemBlocks, tools, pSta
 // Stage 3 — bounded remediation loop: only engages when QC found Critical/
 // High defects, and never blocks — whatever the final QC report says, rows
 // and report both flow through to rendering/export (see finishRun).
+// Opus on a full ~50-row re-emit can drop the connection on large labels;
+// failures here must not discard the extraction/QC rows already in hand.
 async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
   let { messages, qcReport, lastToolUseId } = state;
   let cycle = 0;
+  let remediationStepsDone = 0;
   const needsFix = r => r && (r.overall === "Critical" || r.overall === "High");
+  // Sonnet for remediation on large row sets — Opus full re-emits are the
+  // connection-drop hotspot. Keep Opus only for smaller corrections.
+  const remediationModel = (rawRows || []).length > 25 ? MODEL_STANDARD : MODEL_ESCALATED;
+  const remediationLabel = remediationModel === MODEL_ESCALATED ? "Opus" : "Sonnet";
+  let aborted = false;
   while (needsFix(qcReport) && cycle < REMEDIATION_MAX_CYCLES) {
     cycle++;
     updateAiProgress(pState, `remediating (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
-    logEl.textContent += `   remediation cycle ${cycle}/${REMEDIATION_MAX_CYCLES}: ${(qcReport.defects || []).length} defect(s) (${qcReport.overall}) — correcting on Opus…\n`;
+    logEl.textContent += `   remediation cycle ${cycle}/${REMEDIATION_MAX_CYCLES}: ${(qcReport.defects || []).length} defect(s) (${qcReport.overall}) — correcting on ${remediationLabel}…\n`;
     messages.push({
       role: "user",
       content: [
@@ -4834,34 +4866,46 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
         }
       ]
     });
-    const corr = await callAnthropic(messages, systemBlocks, tools, "emit_use_summary_rows", MODEL_ESCALATED);
-    messages.push({ role: "assistant", content: corr.data.content });
-    rawRows = corr.toolUse.input?.rows ?? rawRows;
-    advanceAiProgress(pState, 1, `remediation correction applied (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
+    try {
+      const corr = await callAnthropic(messages, systemBlocks, tools, "emit_use_summary_rows", remediationModel);
+      messages.push({ role: "assistant", content: corr.data.content });
+      rawRows = corr.toolUse.input?.rows ?? rawRows;
+      remediationStepsDone++;
+      advanceAiProgress(pState, 1, `remediation correction applied (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
 
-    updateAiProgress(pState, `QC recheck (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
-    messages.push({
-      role: "user",
-      content: [
-        { type: "tool_result", tool_use_id: corr.toolUse.id, content: "Received." },
-        { type: "text", text: "Re-run the full 5-pass QC review against the corrected rows." }
-      ]
-    });
-    const recheck = await callAnthropic(messages, systemBlocks, tools, "emit_qc_report", MODEL_ESCALATED);
-    messages.push({ role: "assistant", content: recheck.data.content });
-    qcReport = recheck.toolUse.input || qcReport;
-    lastToolUseId = recheck.toolUse.id;
-    advanceAiProgress(pState, 1, `QC recheck complete (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
+      updateAiProgress(pState, `QC recheck (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
+      messages.push({
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: corr.toolUse.id, content: "Received." },
+          { type: "text", text: "Re-run the full 5-pass QC review against the corrected rows." }
+        ]
+      });
+      const recheck = await callAnthropic(messages, systemBlocks, tools, "emit_qc_report", remediationModel);
+      messages.push({ role: "assistant", content: recheck.data.content });
+      qcReport = recheck.toolUse.input || qcReport;
+      lastToolUseId = recheck.toolUse.id;
+      remediationStepsDone++;
+      advanceAiProgress(pState, 1, `QC recheck complete (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
+    } catch (err) {
+      aborted = true;
+      logEl.textContent += `   ⚠ remediation cycle ${cycle} aborted — ${err.message}. Keeping ${rawRows.length} row(s) already extracted.\n`;
+      break;
+    }
   }
-  // Remediation never engaged, or exited before exhausting its cycle budget —
-  // jump the bar past whatever remediation steps were skipped.
-  const skipped = (REMEDIATION_MAX_CYCLES - cycle) * 2;
-  if (skipped > 0) {
-    advanceAiProgress(pState, skipped, cycle > 0 ? "remediation complete (stage 3/3)" : "remediation not needed (stage 3/3)");
+  const leftover = (REMEDIATION_MAX_CYCLES * 2) - remediationStepsDone;
+  if (leftover > 0) {
+    advanceAiProgress(
+      pState,
+      leftover,
+      aborted ? "remediation aborted (stage 3/3)" : (cycle > 0 ? "remediation complete (stage 3/3)" : "remediation not needed (stage 3/3)")
+    );
   }
-  logEl.textContent += cycle > 0
-    ? `   remediation complete after ${cycle} cycle(s) — final QC status: ${qcReport.overall}.\n`
-    : `   QC review: ${qcReport.overall}${(qcReport.defects || []).length ? ` (${qcReport.defects.length} defect(s), below remediation threshold)` : " — clean"}.\n`;
+  logEl.textContent += aborted
+    ? `   remediation stopped early — QC status remains: ${qcReport.overall}.\n`
+    : cycle > 0
+      ? `   remediation complete after ${cycle} cycle(s) — final QC status: ${qcReport.overall}.\n`
+      : `   QC review: ${qcReport.overall}${(qcReport.defects || []).length ? ` (${qcReport.defects.length} defect(s), below remediation threshold)` : " — clean"}.\n`;
   return { rawRows, qcReport, cycles: cycle };
 }
 
