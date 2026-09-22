@@ -476,7 +476,7 @@ async function runExtractionTurn(env, jobId, fileIndex, doc, pageMarkedText, sys
   const { data, toolUse } = await callAnthropic(env, messages, systemBlocks, tools, "emit_use_summary_rows");
   addUsage(usageTotals, data.usage);
   messages.push({ role: "assistant", content: data.content });
-  return { messages, rawRows: toolUse.input?.rows || [], lastToolUseId: toolUse.id };
+  return { messages, rawRows: toolUse.input?.rows ?? [], lastToolUseId: toolUse.id };
 }
 
 // Stage 2 — QC agent: a fresh conversation, independent of the extractor's
@@ -521,7 +521,7 @@ async function runRemediationLoop(env, jobId, fileIndex, state, rawRows, systemB
     const corr = await callAnthropic(env, messages, systemBlocks, tools, "emit_use_summary_rows", MODEL_ESCALATED);
     addUsage(usageTotals, corr.data.usage, MODEL_ESCALATED);
     messages.push({ role: "assistant", content: corr.data.content });
-    rawRows = corr.toolUse.input?.rows || rawRows;
+    rawRows = corr.toolUse.input?.rows ?? rawRows;
 
     await reportStage(env, jobId, fileIndex, `QC recheck (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
     messages.push({

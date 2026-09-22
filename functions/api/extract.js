@@ -1,14 +1,11 @@
 // Cloudflare Pages Function — relays app/index.html's AI-extraction calls to
 // Bayer's AI Gateway (TrueFoundry) using Entra ID client-credentials (M2M).
 //
-// Upstream Anthropic calls use stream:true. The SSE body is piped through to
-// the browser so this Function does not buffer a multi-minute generation
-// (which was causing Cloudflare/proxy 504s on large labels).
-//
-// Do NOT tee() the body for audit/usage: an unread tee branch backpressures
-// the client branch and truncates large tool_use streams (empty rows, while
-// small QC reports still succeed). Audit records status/model only; token
-// usage for streamed calls is omitted.
+// Upstream Anthropic calls use stream:true. This Function reassembles the
+// Gateway SSE into one Anthropic message object, while streaming SSE
+// keepalives + a final `ust_result` event to the browser. That keeps the
+// Cloudflare connection alive (avoids 504) without relying on the browser
+// to parse multi‑MB tool_use streams (which produced silent 0-row results).
 //
 // Required Cloudflare Pages secrets (Production environment — never commit):
 //   AZURE_CLIENT_SECRET  Entra client secret for "Use Summary Table Extractor"
@@ -18,13 +15,16 @@ import {
   checkKillSwitch,
   checkRateLimit,
   checkBudget,
+  recordUsage,
   recordAudit,
-  scanForInjectionPhrases
+  scanForInjectionPhrases,
+  estimateCostUsd
 } from "./_lib/governance.js";
 import { getGatewayAccessToken, gatewayConfig } from "./_lib/entra.js";
-import { withStreamEnabled } from "./_lib/anthropic-stream.js";
+import { readMessagesStream, withStreamEnabled } from "./_lib/anthropic-stream.js";
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const KEEPALIVE_MS = 4000;
 
 export async function onRequestPost(context) {
   const { request, env, waitUntil } = context;
@@ -165,22 +165,76 @@ export async function onRequestPost(context) {
     });
   }
 
-  // Fire-and-forget audit without consuming the body (no tee / no backpressure).
-  const auditTask = recordAudit(env, {
-    source: "extract",
-    status: "ok_stream",
-    durationMs: Date.now() - startedAt,
-    model,
-    flags: flags.length ? flags : undefined
-  }).catch(err => console.error(`extract.js: audit failed: ${err.message}`));
-  if (typeof waitUntil === "function") waitUntil(auditTask);
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+  const encoder = new TextEncoder();
 
-  return new Response(upstreamResponse.body, {
+  const writeLine = async (line) => {
+    await writer.write(encoder.encode(line));
+  };
+
+  const pump = (async () => {
+    const keepalive = setInterval(() => {
+      writeLine(": keepalive\n\n").catch(() => { /* client gone */ });
+    }, KEEPALIVE_MS);
+    try {
+      // Immediate first byte so proxies do not idle-timeout before upstream starts.
+      await writeLine(": upstream-open\n\n");
+      const assembled = await readMessagesStream(upstreamResponse);
+
+      const usageRaw = assembled.usage || {};
+      const inputTokens = usageRaw.input_tokens ?? 0;
+      const outputTokens = usageRaw.output_tokens ?? 0;
+      const estCostUsd = (inputTokens || outputTokens)
+        ? estimateCostUsd({ inputTokens, outputTokens }, model)
+        : 0;
+      if (inputTokens || outputTokens) {
+        await recordUsage(env, { inputTokens, outputTokens, estCostUsd });
+      }
+      await recordAudit(env, {
+        source: "extract",
+        status: "ok",
+        durationMs: Date.now() - startedAt,
+        model,
+        inputTokens: inputTokens || undefined,
+        outputTokens: outputTokens || undefined,
+        estCostUsd: (inputTokens || outputTokens) ? estCostUsd : undefined,
+        flags: flags.length ? flags : undefined
+      });
+
+      await writeLine(`data: ${JSON.stringify({ type: "ust_result", message: assembled })}\n\n`);
+    } catch (err) {
+      console.error(`extract.js: assemble failed: ${err.message}`);
+      try {
+        await recordAudit(env, {
+          source: "extract",
+          status: "error",
+          durationMs: Date.now() - startedAt,
+          model,
+          flags: flags.length ? flags : undefined
+        });
+      } catch (_) { /* ignore */ }
+      try {
+        await writeLine(`data: ${JSON.stringify({
+          type: "ust_error",
+          error: { message: err.message || "AI Gateway stream failed" }
+        })}\n\n`);
+      } catch (_) { /* ignore */ }
+    } finally {
+      clearInterval(keepalive);
+      try { await writer.close(); } catch (_) { /* ignore */ }
+    }
+  })();
+
+  if (typeof waitUntil === "function") waitUntil(pump);
+
+  return new Response(readable, {
     status: 200,
     headers: {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache",
-      "x-ust-stream": "1"
+      "x-ust-stream": "1",
+      "x-ust-result": "1"
     }
   });
 }

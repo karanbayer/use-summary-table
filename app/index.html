@@ -4437,6 +4437,51 @@ async function readMessagesStream(response) {
   return { stop_reason: stopReason, content, usage, type: "message", role: "assistant" };
 }
 
+// Relay protocol from functions/api/extract.js: SSE keepalives + one final
+// `ust_result` (assembled Anthropic message) or `ust_error` event.
+async function readUstResultStream(response) {
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  const handleData = (dataLine) => {
+    if (!dataLine || dataLine === "[DONE]") return null;
+    const evt = JSON.parse(dataLine);
+    if (evt.type === "ust_error") {
+      throw new Error(evt.error?.message || "AI Gateway stream failed");
+    }
+    if (evt.type === "ust_result") {
+      if (!evt.message) throw new Error("AI relay returned an empty result");
+      return evt.message;
+    }
+    return null;
+  };
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer = (buffer + value).replace(/\r\n/g, "\n");
+      let sepIndex;
+      while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
+        const rawEvent = buffer.slice(0, sepIndex);
+        buffer = buffer.slice(sepIndex + 2);
+        const dataLines = rawEvent.split("\n").filter(line => line.startsWith("data:"));
+        if (!dataLines.length) continue; // keepalive comments
+        const message = handleData(dataLines.map(line => line.slice(5).trim()).join(""));
+        if (message) return message;
+      }
+    }
+    if (buffer.trim()) {
+      const dataLines = buffer.split("\n").filter(line => line.startsWith("data:"));
+      if (dataLines.length) {
+        const message = handleData(dataLines.map(line => line.slice(5).trim()).join(""));
+        if (message) return message;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  throw new Error("AI relay stream ended without a result");
+}
+
 async function callAnthropic(messages, systemBlocks, tools, toolChoiceName, model = MODEL_STANDARD) {
   const body = JSON.stringify({
     model,
@@ -4471,9 +4516,14 @@ async function callAnthropic(messages, systemBlocks, tools, toolChoiceName, mode
     throw new Error(`AI Gateway request failed (${response.status})${detail ? `: ${detail}` : ""}`);
   }
 
-  const isStream = (response.headers.get("content-type") || "").includes("text/event-stream")
-    || response.headers.get("x-ust-stream") === "1";
-  const data = isStream ? await readMessagesStream(response) : await response.json();
+  let data;
+  if (response.headers.get("x-ust-result") === "1") {
+    data = await readUstResultStream(response);
+  } else {
+    const isStream = (response.headers.get("content-type") || "").includes("text/event-stream")
+      || response.headers.get("x-ust-stream") === "1";
+    data = isStream ? await readMessagesStream(response) : await response.json();
+  }
   if (data.stop_reason === "max_tokens") {
     // The tool-use JSON may be cut off mid-row — surface this rather than
     // silently presenting a possibly-truncated row set as complete.
@@ -4486,7 +4536,7 @@ async function callAnthropic(messages, systemBlocks, tools, toolChoiceName, mode
   // zero-row label (that path previously looked "successful" with 0 rows).
   if (toolChoiceName === "emit_use_summary_rows" && !Array.isArray(toolUse.input?.rows)) {
     throw new Error(
-      `Extraction tool returned no rows array (stream may have been truncated; stop_reason=${data.stop_reason || "unknown"}).`
+      `Extraction tool returned no rows array (stream may have been truncated; stop_reason=${data.stop_reason || "unknown"}, output_tokens=${data.usage?.output_tokens ?? "?"}).`
     );
   }
   return { data, toolUse };
@@ -4691,9 +4741,14 @@ async function askChat(question) {
       throw new Error(`Request failed (${response.status})${detail ? `: ${detail}` : ""}`);
     }
 
-    const isStream = (response.headers.get("content-type") || "").includes("text/event-stream")
-      || response.headers.get("x-ust-stream") === "1";
-    const data = isStream ? await readMessagesStream(response) : await response.json();
+    let data;
+    if (response.headers.get("x-ust-result") === "1") {
+      data = await readUstResultStream(response);
+    } else {
+      const isStream = (response.headers.get("content-type") || "").includes("text/event-stream")
+        || response.headers.get("x-ust-stream") === "1";
+      data = isStream ? await readMessagesStream(response) : await response.json();
+    }
     if (!data.content || !data.content.length) throw new Error("Response did not include an answer.");
 
     chatMessages.push({ role: "user", content: [{ type: "text", text: question }] });
@@ -4732,8 +4787,12 @@ async function runExtractionTurn(doc, pageMarkedText, systemBlocks, tools, pStat
   ];
   const { data, toolUse } = await callAnthropic(messages, systemBlocks, tools, "emit_use_summary_rows");
   messages.push({ role: "assistant", content: data.content });
+  const rawRows = toolUse.input?.rows ?? [];
+  if (rawRows.length === 0) {
+    logEl.textContent += `   ⚠ model returned 0 rows (stop_reason=${data.stop_reason || "?"}, output_tokens=${data.usage?.output_tokens ?? "?"})\n`;
+  }
   advanceAiProgress(pState, 1, "extraction complete (stage 1/3)");
-  return { messages, rawRows: toolUse.input?.rows || [], lastToolUseId: toolUse.id };
+  return { messages, rawRows, lastToolUseId: toolUse.id };
 }
 
 // Stage 2 — QC agent: a fresh conversation, independent of the extractor's
@@ -4777,7 +4836,7 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
     });
     const corr = await callAnthropic(messages, systemBlocks, tools, "emit_use_summary_rows", MODEL_ESCALATED);
     messages.push({ role: "assistant", content: corr.data.content });
-    rawRows = corr.toolUse.input?.rows || rawRows;
+    rawRows = corr.toolUse.input?.rows ?? rawRows;
     advanceAiProgress(pState, 1, `remediation correction applied (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
 
     updateAiProgress(pState, `QC recheck (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
