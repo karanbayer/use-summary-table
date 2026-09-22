@@ -4153,10 +4153,10 @@ const REMEDIATION_MAX_CYCLES = 2;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-09-22d";
-// Full-table re-emit during remediation drops the connection on large labels;
-// above this row count we return extraction + QC for human review instead.
-const REMEDIATION_ROW_SKIP_THRESHOLD = 25;
+const PIPELINE_BUILD = "2026-09-22e";
+// Full-table re-emit during remediation can drop the connection on large
+// labels; we still attempt Opus correction and keep extraction rows if it fails.
+const REMEDIATION_ROW_SKIP_THRESHOLD = Infinity;
 
 // Progress-bar step budget per document, sized to the worst-case call count:
 // 1 (extraction) + 1 (QC) + up to 2 calls per remediation cycle (correction,
@@ -4854,8 +4854,8 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
   let cycle = 0;
   let remediationStepsDone = 0;
   const needsFix = r => r && (r.overall === "Critical" || r.overall === "High");
-  // Always Sonnet for interactive remediation — Opus full re-emits are the
-  // connection-drop hotspot on multi-dozen-row labels.
+  // Row corrections on Sonnet (full re-emit is the timeout hotspot).
+  // QC rechecks stay on Opus per the independent-review path.
   const remediationModel = MODEL_STANDARD;
   const remediationLabel = "Sonnet";
   let aborted = false;
@@ -4888,7 +4888,7 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
           { type: "text", text: "Re-run the full 5-pass QC review against the corrected rows." }
         ]
       });
-      const recheck = await callAnthropic(messages, systemBlocks, tools, "emit_qc_report", remediationModel);
+      const recheck = await callAnthropic(messages, systemBlocks, tools, "emit_qc_report", MODEL_ESCALATED);
       messages.push({ role: "assistant", content: recheck.data.content });
       qcReport = recheck.toolUse.input || qcReport;
       lastToolUseId = recheck.toolUse.id;
@@ -4978,7 +4978,7 @@ async function extractWithLLM(doc, pState) {
   const extraction = await runExtractionTurn(doc, pageMarkedText, systemBlocks, tools, pState);
   logEl.textContent += `   ${extraction.rawRows.length} row(s) from initial extraction\n`;
 
-  logEl.textContent += `   stage 2/3 — independent QC review…\n`;
+  logEl.textContent += `   stage 2/3 — independent QC review (Opus)…\n`;
   const qc = await runQcTurn(extraction.rawRows, doc, pageMarkedText, systemBlocks, tools, pState);
 
   logEl.textContent += `   stage 3/3 — bounded remediation (up to ${REMEDIATION_MAX_CYCLES} cycle(s))…\n`;
