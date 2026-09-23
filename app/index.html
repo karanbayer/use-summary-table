@@ -5760,6 +5760,24 @@ if (jobIdParam) {
 } else {
   renderLastJobBanner();
 }
+
+// Agentrix Phase 1 (and any runtime without background workers) advertises
+// capabilities at GET /api/features. Cloudflare has no such route — leave
+// the background UI visible there. On Agentrix, hide job controls until
+// Phase 2 ports the queue/worker stack.
+(async () => {
+  try {
+    const res = await fetch("/api/features");
+    if (!res.ok) return;
+    const features = await res.json();
+    if (features.backgroundJobs === false) {
+      runBgBtn.style.display = "none";
+      jobHistoryBtn.style.display = "none";
+      lastJobBannerEl.style.display = "none";
+      runBtn.title = "Run extraction (interactive). Background jobs are not enabled on this host yet.";
+    }
+  } catch (_) { /* offline / file:// / Cloudflare without /api/features */ }
+})();
 </script>
 </body>
 </html>

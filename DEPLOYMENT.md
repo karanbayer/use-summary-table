@@ -1,4 +1,76 @@
-# Deployment Guide — Cloudflare Pages
+# Deployment Guide
+
+This app has two deploy targets:
+
+1. **Cloudflare Pages** (current pilot) — static `app/` + Pages Functions under `functions/api/`
+2. **Agentrix / container** — single Docker image: nginx (UI) + Node relay (`server/`) for LLM extraction
+
+---
+
+## Agentrix (container)
+
+### What the image runs
+
+- **nginx** on port **8080** — serves `app/` and proxies `/api/*` to the Node process
+- **Node** on loopback **3000** — ports of `/api/extract` and `/api/qc-summary` (Entra → Bayer AI Gateway)
+- **Not in Phase 1:** background jobs (`/api/jobs*`, queue worker). The UI hides those controls when `GET /api/features` reports `backgroundJobs: false`.
+
+### Required secrets / env vars
+
+Set these in Agentrix (or your orchestrator) before deploy:
+
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `AZURE_CLIENT_SECRET` | Yes* | Entra client secret for "Use Summary Table Extractor" |
+| `TFY_API_TOKEN` | *or this* | VA fallback if Entra secret is unset |
+| `PILOT_GATE_SECRET` | Yes | Must match `PILOT_GATE_HEADER_VALUE` in `app/index.html` (`ust-pilot-2026`) |
+
+Optional (defaults match `wrangler.toml`):
+
+| Variable | Default |
+|----------|---------|
+| `AZURE_TENANT_ID` | `fcb2b37b-5da0-466b-9b83-0014b67a7c78` |
+| `AZURE_CLIENT_ID` | `5d0b410a-0b42-4427-8bd5-289c1ac0abce` |
+| `AZURE_SCOPE` | `https://bayer.com/ai-gateway-prod-idp/.default` |
+| `TFY_BASE_URL` | `https://global.ai-gateway.int.bayer.ai/api/llm` |
+| `RATE_LIMIT_PER_MINUTE` | `20` |
+| `DAILY_BUDGET_USD` | `100` |
+| `KILL_SWITCH_ENABLED` | unset / `false` |
+| `KILL_SWITCH_REASON` | shown when kill switch is on |
+
+The container must reach `login.microsoftonline.com` and the AI Gateway host from the cluster network (VPN/egress as required by Bayer).
+
+### Deploy
+
+1. Ensure `Dockerfile`, `server/`, `docker/`, and `app/` are on the branch Agentrix clones.
+2. Configure the secrets above in Agentrix.
+3. Redeploy. Health check: `GET /health` → `{"ok":true,"runtime":"agentrix"}`.
+4. Open the app URL → check **Extract with AI** → **Run Extraction**.
+
+### Local smoke test (optional)
+
+```bash
+export AZURE_CLIENT_SECRET="..."
+export PILOT_GATE_SECRET="ust-pilot-2026"
+docker build -t use-summary-table:local .
+docker run --rm -p 8080:8080 \
+  -e AZURE_CLIENT_SECRET \
+  -e PILOT_GATE_SECRET \
+  use-summary-table:local
+# open http://localhost:8080
+```
+
+Or run the API alone against a static file server:
+
+```bash
+export AZURE_CLIENT_SECRET="..."
+export PILOT_GATE_SECRET="ust-pilot-2026"
+node server/index.mjs
+```
+
+---
+
+## Cloudflare Pages
 
 This app is deployed on **Cloudflare Pages** with a serverless function for LLM extraction.
 
