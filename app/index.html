@@ -4236,14 +4236,15 @@ const MAX_TOKENS = 64000;
 // into Worker via "Run in background". Soft-warn above these sizes.
 const REMEDIATION_MAX_CYCLES = 1;
 
-// Stages 1–2 (extraction, independent QC) use Sonnet for latency on large
-// labels; stage 3 (remediation) uses Opus when QC is Critical/High.
+// Stages 1–2: extraction uses Sonnet; independent QC prefers Opus, then
+// falls back to Sonnet after QC_OPUS_MAX_ATTEMPTS gateway failures.
+// Stage 3 (remediation) uses Opus when QC is Critical/High.
 // Gateway model IDs are provider-prefixed (confirmed against
 // /v1/models on global.ai-gateway.int.bayer.ai).
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-09-22j";
+const PIPELINE_BUILD = "2026-09-23b";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -4543,6 +4544,8 @@ function buildDocMessageBlocks(doc, pageMarkedText, stageInstructionText) {
 // meaning the outage it hit outlasted 6s.
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 524]);
 const MAX_ATTEMPTS = 5;
+/** Opus QC tries this many times before falling back to Sonnet. */
+const QC_OPUS_MAX_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 2000;
 
 function sleep(ms) {
@@ -4683,7 +4686,8 @@ async function readUstResultStream(response) {
   throw new Error("AI relay stream ended without a result");
 }
 
-async function callAnthropic(messages, systemBlocks, tools, toolChoiceName, model = MODEL_STANDARD) {
+async function callAnthropic(messages, systemBlocks, tools, toolChoiceName, model = MODEL_STANDARD, opts = {}) {
+  const maxAttempts = Number(opts.maxAttempts) > 0 ? Number(opts.maxAttempts) : MAX_ATTEMPTS;
   const body = JSON.stringify({
     model,
     max_tokens: MAX_TOKENS,
@@ -4695,7 +4699,7 @@ async function callAnthropic(messages, systemBlocks, tools, toolChoiceName, mode
   });
 
   let lastErr;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let response;
     try {
       response = await fetch(RELAY_ENDPOINT, {
@@ -4710,19 +4714,19 @@ async function callAnthropic(messages, systemBlocks, tools, toolChoiceName, mode
       });
     } catch (err) {
       lastErr = err;
-      if (!isRetryableNetworkError(err) || attempt === MAX_ATTEMPTS) throw err;
-      logEl.textContent += `   ⚠ network error (attempt ${attempt}/${MAX_ATTEMPTS}): ${err.message} — retrying…\n`;
+      if (!isRetryableNetworkError(err) || attempt === maxAttempts) throw err;
+      logEl.textContent += `   ⚠ network error (attempt ${attempt}/${maxAttempts}): ${err.message} — retrying…\n`;
       await sleep(RETRY_BASE_DELAY_MS * attempt);
       continue;
     }
 
     if (!response.ok) {
-      if (!RETRYABLE_STATUS.has(response.status) || attempt === MAX_ATTEMPTS) {
+      if (!RETRYABLE_STATUS.has(response.status) || attempt === maxAttempts) {
         let detail = "";
         try { detail = (await response.json()).error?.message || ""; } catch (_) { /* body wasn't JSON */ }
         throw new Error(`AI Gateway request failed (${response.status})${detail ? `: ${detail}` : ""}`);
       }
-      logEl.textContent += `   ⚠ AI Gateway request got ${response.status} (attempt ${attempt}/${MAX_ATTEMPTS}) — retrying…\n`;
+      logEl.textContent += `   ⚠ AI Gateway request got ${response.status} (attempt ${attempt}/${maxAttempts}) — retrying…\n`;
       await sleep(RETRY_BASE_DELAY_MS * attempt);
       continue;
     }
@@ -4759,8 +4763,8 @@ async function callAnthropic(messages, systemBlocks, tools, toolChoiceName, mode
       return { data, toolUse };
     } catch (err) {
       lastErr = err;
-      if (!isRetryableNetworkError(err) || attempt === MAX_ATTEMPTS) throw err;
-      logEl.textContent += `   ⚠ stream dropped (attempt ${attempt}/${MAX_ATTEMPTS}): ${err.message} — retrying…\n`;
+      if (!isRetryableNetworkError(err) || attempt === maxAttempts) throw err;
+      logEl.textContent += `   ⚠ stream dropped (attempt ${attempt}/${maxAttempts}): ${err.message} — retrying…\n`;
       await sleep(RETRY_BASE_DELAY_MS * attempt);
     }
   }
@@ -5022,6 +5026,15 @@ async function runExtractionTurn(doc, pageMarkedText, systemBlocks, tools, pStat
 
 // Stage 2 — QC agent: a fresh conversation, independent of the extractor's
 // own reasoning, auditing the initial row set against the label text.
+// Prefer Opus; after a few gateway failures, fall back to Sonnet so large
+// labels can finish when Opus 502s on Agentrix/AI Gateway.
+function isQcGatewayFallbackError(err) {
+  const msg = String(err && err.message || err || "");
+  if (isRetryableNetworkError(err)) return true;
+  return /AI Gateway request failed \((429|500|502|503|504|524)\)/i.test(msg)
+    || /AI Gateway request failed after retries/i.test(msg);
+}
+
 async function runQcTurn(rawRows, doc, pageMarkedText, systemBlocks, tools, pState) {
   updateAiProgress(pState, "independent QC review (stage 2/3)");
   const stageText = [
@@ -5032,7 +5045,20 @@ async function runQcTurn(rawRows, doc, pageMarkedText, systemBlocks, tools, pSta
   const messages = [
     { role: "user", content: buildDocMessageBlocks(doc, pageMarkedText, stageText) }
   ];
-  const { data, toolUse } = await callAnthropic(messages, systemBlocks, tools, "emit_qc_report", MODEL_ESCALATED);
+  let data;
+  let toolUse;
+  try {
+    ({ data, toolUse } = await callAnthropic(
+      messages, systemBlocks, tools, "emit_qc_report", MODEL_ESCALATED,
+      { maxAttempts: QC_OPUS_MAX_ATTEMPTS }
+    ));
+  } catch (err) {
+    if (!isQcGatewayFallbackError(err)) throw err;
+    logEl.textContent += `   ⚠ Opus QC failed after ${QC_OPUS_MAX_ATTEMPTS} attempt(s) (${err.message}) — falling back to Sonnet…\n`;
+    ({ data, toolUse } = await callAnthropic(
+      messages, systemBlocks, tools, "emit_qc_report", MODEL_STANDARD
+    ));
+  }
   messages.push({ role: "assistant", content: data.content });
   advanceAiProgress(pState, 1, "QC review complete (stage 2/3)");
   return { messages, qcReport: toolUse.input || { overall: "Clean", defects: [] }, lastToolUseId: toolUse.id };
@@ -5192,7 +5218,7 @@ async function extractWithLLM(doc, pState) {
   const extraction = await runExtractionTurn(doc, pageMarkedText, systemBlocks, tools, pState);
   logEl.textContent += `   ${extraction.rawRows.length} row(s) from initial extraction\n`;
 
-  logEl.textContent += `   stage 2/3 — independent QC review (Opus)…\n`;
+  logEl.textContent += `   stage 2/3 — independent QC review (Opus, Sonnet fallback)…\n`;
   const qc = await runQcTurn(extraction.rawRows, doc, pageMarkedText, systemBlocks, tools, pState);
 
   logEl.textContent += `   stage 3/3 — bounded remediation on Opus (up to ${REMEDIATION_MAX_CYCLES} cycle(s))…\n`;
