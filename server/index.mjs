@@ -1,15 +1,23 @@
-// Agentrix Node API — same-origin relay for app/index.html AI extraction.
+// Agentrix Node server — static UI (app/) + AI relay (/api/extract).
 // Ports Cloudflare Pages Functions (extract + qc-summary) without CF runtime.
 // Zero npm dependencies: Node 20+ built-in http + fetch.
+//
+// Knative/Agentrix sets PORT (usually 8080). This process MUST listen on that
+// port and serve both the UI and the API — a separate nginx on 8080 conflicts
+// when PORT is injected, which produced GET / → {"error":{"message":"Not found"}}.
 //
 // Required env:
 //   AZURE_CLIENT_SECRET  (or TFY_API_TOKEN fallback)
 //   PILOT_GATE_SECRET    must match PILOT_GATE_HEADER_VALUE in app/index.html
 // Optional: AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_SCOPE, TFY_BASE_URL,
 //   RATE_LIMIT_PER_MINUTE, DAILY_BUDGET_USD, AUDIT_TTL_SECONDS,
-//   KILL_SWITCH_ENABLED, KILL_SWITCH_REASON, PORT (default 3000)
+//   KILL_SWITCH_ENABLED, KILL_SWITCH_REASON, PORT (default 8080),
+//   STATIC_ROOT (default /app/public)
 
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createMemoryStore } from "./lib/memory-store.mjs";
 import {
   checkKillSwitch,
@@ -23,10 +31,30 @@ import {
 import { getGatewayAccessToken, gatewayConfig } from "./lib/entra.mjs";
 import { readMessagesStream, withStreamEnabled } from "./lib/anthropic-stream.mjs";
 
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = Number(process.env.PORT) || 8080;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const STATIC_ROOT = process.env.STATIC_ROOT
+  || (fs.existsSync("/app/public") ? "/app/public" : path.resolve(__dirname, "../app"));
 const MAX_EXTRACT_BYTES = 2 * 1024 * 1024;
 const MAX_QC_BYTES = 8 * 1024;
 const KEEPALIVE_MS = 1500;
+
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".mjs": "application/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".wasm": "application/wasm",
+  ".map": "application/json",
+  ".txt": "text/plain; charset=utf-8",
+  ".pdf": "application/pdf"
+};
 
 const env = {
   ...process.env,
@@ -285,29 +313,97 @@ function handleJobs(_req, res) {
   });
 }
 
+function handleMcp(_req, res) {
+  // Agentrix advertises /mcp; this app is a browser UI, not an MCP server.
+  json(res, 200, {
+    ok: false,
+    mcp: false,
+    message:
+      "This deployment is a web UI (Use Summary Tables Extractor), not an MCP server. Open / in a browser.",
+    ui: "/",
+    health: "/health",
+    extract: "POST /api/extract"
+  });
+}
+
+function safeJoin(root, reqPath) {
+  const decoded = decodeURIComponent(reqPath.split("?")[0]);
+  const cleaned = path.normalize(decoded).replace(/^(\.\.[/\\])+/, "");
+  const full = path.join(root, cleaned);
+  if (!full.startsWith(root)) return null;
+  return full;
+}
+
+function serveStatic(req, res, urlPath) {
+  let rel = urlPath === "/" ? "/index.html" : urlPath;
+  let filePath = safeJoin(STATIC_ROOT, rel);
+  if (!filePath) {
+    json(res, 400, { error: { message: "Bad path" } });
+    return;
+  }
+
+  fs.stat(filePath, (err, stat) => {
+    if (err || !stat.isFile()) {
+      // SPA-style fallback for unknown paths that aren't under /api
+      const indexPath = path.join(STATIC_ROOT, "index.html");
+      fs.readFile(indexPath, (indexErr, data) => {
+        if (indexErr) {
+          json(res, 404, { error: { message: "Not found" } });
+          return;
+        }
+        res.writeHead(200, {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-cache",
+          "content-length": data.length
+        });
+        res.end(data);
+      });
+      return;
+    }
+
+    const ext = path.extname(filePath).toLowerCase();
+    const type = MIME[ext] || "application/octet-stream";
+    const cache = ext === ".html" ? "no-cache" : "public, max-age=3600";
+    res.writeHead(200, {
+      "content-type": type,
+      "cache-control": cache,
+      "content-length": stat.size
+    });
+    fs.createReadStream(filePath).pipe(res);
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-    const path = url.pathname.replace(/\/+$/, "") || "/";
+    const reqPath = url.pathname.replace(/\/+$/, "") || "/";
 
-    if (req.method === "GET" && (path === "/health" || path === "/api/health")) {
+    if (req.method === "GET" && (reqPath === "/health" || reqPath === "/api/health")) {
       return json(res, 200, { ok: true, runtime: "agentrix" });
     }
 
-    if (req.method === "GET" && path === "/api/features") {
+    if (req.method === "GET" && (reqPath === "/mcp" || reqPath === "/mcp/")) {
+      return handleMcp(req, res);
+    }
+
+    if (req.method === "GET" && reqPath === "/api/features") {
       return handleFeatures(req, res);
     }
 
-    if (req.method === "POST" && path === "/api/extract") {
+    if (req.method === "POST" && reqPath === "/api/extract") {
       return await handleExtract(req, res);
     }
 
-    if (req.method === "POST" && path === "/api/qc-summary") {
+    if (req.method === "POST" && reqPath === "/api/qc-summary") {
       return await handleQcSummary(req, res);
     }
 
-    if (path === "/api/jobs" || path.startsWith("/api/jobs/")) {
+    if (reqPath === "/api/jobs" || reqPath.startsWith("/api/jobs/")) {
       return handleJobs(req, res);
+    }
+
+    if (req.method === "GET" || req.method === "HEAD") {
+      return serveStatic(req, res, url.pathname || "/");
     }
 
     json(res, 404, { error: { message: "Not found" } });
@@ -321,6 +417,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`UST Agentrix API listening on 127.0.0.1:${PORT}`);
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`UST Agentrix listening on 0.0.0.0:${PORT} (static: ${STATIC_ROOT})`);
 });

@@ -11,9 +11,14 @@ This app has two deploy targets:
 
 ### What the image runs
 
-- **nginx** on port **8080** — serves `app/` and proxies `/api/*` to the Node process
-- **Node** on loopback **3000** — ports of `/api/extract` and `/api/qc-summary` (Entra → Bayer AI Gateway)
+- **One Node process** on **`$PORT` (default 8080)** — required by Knative/Agentrix
+  - Static UI from `/app/public` (`app/` in the repo)
+  - `/api/extract` and `/api/qc-summary` (Entra → Bayer AI Gateway)
+  - `/health`, `/api/features`, and a stub `/mcp` that points browsers to `/`
 - **Not in Phase 1:** background jobs (`/api/jobs*`, queue worker). The UI hides those controls when `GET /api/features` reports `backgroundJobs: false`.
+
+> Do not run a separate nginx on 8080: Knative injects `PORT=8080`, and two listeners
+> collide so `GET /` returns the API 404 JSON instead of the UI.
 
 ### Required secrets / env vars
 
