@@ -1,0 +1,17 @@
+name: Deploy to Agentrix
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "tests/**"
+
+jobs:
+  deploy:
+    uses: bayer-int/PH-agentops-build-deploy-pipeline/.github/workflows/agent-build-push.yml@main
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      agent_name: "agent-27163dcf"
