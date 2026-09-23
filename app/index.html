@@ -808,6 +808,8 @@ const jobHistoryBtn     = document.getElementById("jobHistoryBtn");
 const jobHistoryPanel   = document.getElementById("jobHistoryPanel");
 const jobHistoryList    = document.getElementById("jobHistoryList");
 const jobHistoryClearBtn = document.getElementById("jobHistoryClearBtn");
+// Set false when GET /api/features reports backgroundJobs: false (Agentrix Phase 1).
+let backgroundJobsAvailable = true;
 
 // Stored as localStorage["jobHistory"]: [{ id, submittedAt }, ...] newest
 // first, capped at JOB_HISTORY_MAX. Replaces the older single "lastJobId"
@@ -5274,12 +5276,21 @@ async function finishRun(documents, totalPages, selectedAi) {
     documents.length >= INTERACTIVE_WARN_FILES
     || totalPages >= INTERACTIVE_WARN_PAGES
   )) {
-    logEl.textContent += `\n⚠ ${documents.length} file(s), ${totalPages} page(s) — large for in-tab streaming `
-      + `(pipeline ${PIPELINE_BUILD}). Continuing interactively; use Run in background if the stream drops.\n`;
-    showNotice(
-      `${documents.length} file(s) / ${totalPages} page(s) may drop on interactive streaming. Prefer Run in background for batches or large labels.`,
-      "warn"
-    );
+    if (backgroundJobsAvailable) {
+      logEl.textContent += `\n⚠ ${documents.length} file(s), ${totalPages} page(s) — large for in-tab streaming `
+        + `(pipeline ${PIPELINE_BUILD}). Continuing interactively; use Run in background if the stream drops.\n`;
+      showNotice(
+        `${documents.length} file(s) / ${totalPages} page(s) may drop on interactive streaming. Prefer Run in background for batches or large labels.`,
+        "warn"
+      );
+    } else {
+      logEl.textContent += `\n⚠ ${documents.length} file(s), ${totalPages} page(s) — large for in-tab streaming `
+        + `(pipeline ${PIPELINE_BUILD}). Background jobs are not available on this host; keep this tab open until the run finishes.\n`;
+      showNotice(
+        `${documents.length} file(s) / ${totalPages} page(s) may drop on interactive streaming. Keep this tab open — background jobs are not enabled on this host yet.`,
+        "warn"
+      );
+    }
   }
 
   // Results are collected here (indexed by original position) instead of
