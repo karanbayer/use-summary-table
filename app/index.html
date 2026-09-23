@@ -242,6 +242,31 @@
   .job-history-age { flex: 1; color: var(--muted); }
   .job-history-empty { padding: 14px 0; color: var(--muted); font-size: 13.5px; }
 
+  .batch-wizard {
+    display: none; margin-top: 14px; border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 16px; font-size: 14px; background: #fbfcfe;
+  }
+  .batch-wizard-head {
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    flex-wrap: wrap; margin-bottom: 8px;
+  }
+  .batch-wizard-head strong { font-size: 13.5px; }
+  .batch-wizard-sub { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
+  .batch-list { list-style: none; margin: 0; padding: 0; }
+  .batch-item {
+    display: flex; align-items: center; gap: 10px; padding: 10px 0;
+    border-bottom: 1px solid var(--line); font-size: 13.5px;
+  }
+  .batch-item:last-child { border-bottom: none; }
+  .batch-icon { width: 1.4em; text-align: center; flex-shrink: 0; }
+  .batch-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
+  .batch-detail { color: var(--muted); font-size: 12.5px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .batch-item.queued .batch-icon { color: var(--muted); }
+  .batch-item.running .batch-icon { color: var(--brand); }
+  .batch-item.done .batch-icon, .batch-item.done .batch-detail { color: var(--ok); }
+  .batch-item.failed .batch-icon, .batch-item.failed .batch-detail { color: #b42318; }
+  .batch-retry-one { padding: 4px 10px; font-size: 12px; }
+
   .warnings {
     margin-top: 18px; background: #fffaeb; border: 1px solid #fedf89;
     border-radius: 10px; padding: 0; color: #7a2e0e; font-size: 14px;
@@ -517,7 +542,7 @@
     <ul class="files" id="fileList" aria-label="Selected files"></ul>
 
     <div class="actions">
-      <button class="primary" id="runBtn" disabled title="Best for 1 small label. For multi-file or large labels, use Run in background.">Run Extraction</button>
+      <button class="primary" id="runBtn" disabled title="Runs each selected label one-by-one in this tab (multi-file uses the batch queue).">Run Extraction</button>
       <button class="ghost" id="runBgBtn" disabled title="Recommended for batches (e.g. 12 labels) and large PDFs — runs on the server; you can close the tab">Run in background</button>
       <button class="ghost" id="clearBtn" disabled>Clear</button>
       <button class="ghost small-target" id="jobHistoryBtn" type="button" title="See past background runs and their status">🕓 Job history</button>
@@ -526,6 +551,15 @@
         🤖 Extract with AI
       </label>
       <span class="status" id="status" role="status" aria-live="polite">No files selected.</span>
+    </div>
+
+    <div class="batch-wizard" id="batchWizard" role="region" aria-label="Batch extraction queue" style="display:none">
+      <div class="batch-wizard-head">
+        <strong>Batch queue</strong>
+        <button class="ghost small-target" id="batchRetryFailedBtn" type="button" style="display:none">Retry failed</button>
+      </div>
+      <p class="batch-wizard-sub" id="batchWizardSub">Labels run one-by-one in this tab. Keep the tab open until the queue finishes.</p>
+      <ul class="batch-list" id="batchList"></ul>
     </div>
 
     <div class="job-history-panel" id="jobHistoryPanel" role="region" aria-label="Job history" style="display:none">
@@ -808,8 +842,91 @@ const jobHistoryBtn     = document.getElementById("jobHistoryBtn");
 const jobHistoryPanel   = document.getElementById("jobHistoryPanel");
 const jobHistoryList    = document.getElementById("jobHistoryList");
 const jobHistoryClearBtn = document.getElementById("jobHistoryClearBtn");
+const batchWizardEl = document.getElementById("batchWizard");
+const batchListEl = document.getElementById("batchList");
+const batchWizardSubEl = document.getElementById("batchWizardSub");
+const batchRetryFailedBtn = document.getElementById("batchRetryFailedBtn");
 // Set false when GET /api/features reports backgroundJobs: false (Agentrix Phase 1).
 let backgroundJobsAvailable = true;
+
+/** @type {{ fileName: string, status: string, detail: string, docIndex: number }[]} */
+let batchQueue = [];
+/** Snapshot used by Retry failed — set during finishRun. */
+let batchRunContext = null;
+
+const BATCH_STATUS_ICON = {
+  queued: "○",
+  running: "◉",
+  done: "✔",
+  failed: "✖"
+};
+
+function initBatchQueue(documents) {
+  batchQueue = documents.map((doc, docIndex) => ({
+    fileName: doc.fileName,
+    docIndex,
+    status: "queued",
+    detail: "Waiting…"
+  }));
+  renderBatchWizard();
+}
+
+function setBatchItem(docIndex, status, detail) {
+  const item = batchQueue.find(b => b.docIndex === docIndex);
+  if (!item) return;
+  item.status = status;
+  item.detail = detail || "";
+  renderBatchWizard();
+}
+
+function renderBatchWizard() {
+  if (!batchQueue.length) {
+    batchWizardEl.style.display = "none";
+    batchRetryFailedBtn.style.display = "none";
+    return;
+  }
+  const multi = batchQueue.length >= 2;
+  batchWizardEl.style.display = "block";
+  const done = batchQueue.filter(b => b.status === "done").length;
+  const failed = batchQueue.filter(b => b.status === "failed").length;
+  const running = batchQueue.find(b => b.status === "running");
+  batchWizardSubEl.textContent = multi
+    ? `Running one label at a time in this tab (${done} done`
+      + (failed ? `, ${failed} failed` : "")
+      + (running ? `, now: ${running.fileName}` : "")
+      + "). Keep this tab open."
+    : "Extraction progress for this label.";
+  batchRetryFailedBtn.style.display = failed ? "inline-flex" : "none";
+  batchListEl.innerHTML = batchQueue.map(item => `
+    <li class="batch-item ${esc(item.status)}">
+      <span class="batch-icon" aria-hidden="true">${BATCH_STATUS_ICON[item.status] || "·"}</span>
+      <span class="batch-name" title="${esc(item.fileName)}">${esc(item.fileName)}</span>
+      <span class="batch-detail" title="${esc(item.detail)}">${esc(item.detail)}</span>
+      ${item.status === "failed"
+        ? `<button type="button" class="ghost small-target batch-retry-one" data-doc-index="${item.docIndex}">Retry</button>`
+        : ""}
+    </li>`).join("");
+}
+
+function commitDocRowsToTable(doc, rows, selectedAi) {
+  allRows.push(...rows);
+  allRows.slice(-rows.length).forEach(sanitizeRowForEpa);
+  if (selectedAi) {
+    logEl.textContent += `   active ingredient: ${selectedAi}\n`;
+  }
+  logEl.textContent += doc.__aiConc
+    ? `   a.i. concentration read from label: ${round3(doc.__aiConc)} lb a.i./gal `
+      + `— lb a.i./A = (fl oz/A ÷ 128) × ${round3(doc.__aiConc)}\n`
+    : `   a.i. concentration not stated on this label — lb a.i./A left NS (R19)\n`;
+  rows.forEach(r => {
+    logEl.textContent += `   • ${r["Use"]} — ${r["App. Target"]}/${r["App. Type"]} | rate: ${r["App Rate (lb ai/A)"]} | PHI: ${r["PHI (days)"]} | REI: ${r["REI"]}\n`;
+    const drv = Object.entries(r.__derived || {});
+    if (drv.length) {
+      logEl.textContent += `       derived: ${drv.map(([c, id]) => `${c}="${r[c]}" (${id})`).join("; ")}\n`;
+    }
+  });
+  console.table(rows);
+}
 
 // Stored as localStorage["jobHistory"]: [{ id, submittedAt }, ...] newest
 // first, capped at JOB_HISTORY_MAX. Replaces the older single "lastJobId"
@@ -5697,27 +5814,22 @@ async function finishRun(documents, totalPages, selectedAi) {
   barEl.style.display = "block";
   setProgress(0);
 
-  // How many documents' AI pipelines run at once in this tab. Cap at 1 on the
-  // TrueFoundry path — parallel long streams through Pages Functions multiply
-  // "Network connection lost" failures (was 3).
-  const EXTRACTION_CONCURRENCY = 1;
-
   if (useLLM && (
     documents.length >= INTERACTIVE_WARN_FILES
     || totalPages >= INTERACTIVE_WARN_PAGES
   )) {
     if (backgroundJobsAvailable) {
       logEl.textContent += `\n⚠ ${documents.length} file(s), ${totalPages} page(s) — large for in-tab streaming `
-        + `(pipeline ${PIPELINE_BUILD}). Continuing interactively; use Run in background if the stream drops.\n`;
+        + `(pipeline ${PIPELINE_BUILD}). Batch queue runs one-by-one; use Run in background if you need to close the tab.\n`;
       showNotice(
-        `${documents.length} file(s) / ${totalPages} page(s) may drop on interactive streaming. Prefer Run in background for batches or large labels.`,
+        `${documents.length} file(s) / ${totalPages} page(s) may drop on interactive streaming. The batch queue runs one label at a time — or use Run in background.`,
         "warn"
       );
     } else {
       logEl.textContent += `\n⚠ ${documents.length} file(s), ${totalPages} page(s) — large for in-tab streaming `
-        + `(pipeline ${PIPELINE_BUILD}). Background jobs are not available on this host; keep this tab open until the run finishes.\n`;
+        + `(pipeline ${PIPELINE_BUILD}). Batch queue runs one-by-one; keep this tab open until the queue finishes.\n`;
       showNotice(
-        `${documents.length} file(s) / ${totalPages} page(s) may drop on interactive streaming. Keep this tab open — background jobs are not enabled on this host yet.`,
+        `${documents.length} file(s) / ${totalPages} page(s) — running via the batch queue (one label at a time). Keep this tab open.`,
         "warn"
       );
     }
@@ -5740,64 +5852,81 @@ async function finishRun(documents, totalPages, selectedAi) {
     doc.__physicalForm = undefined;
   }
 
+  initBatchQueue(documents);
+  batchRunContext = { documents, totalPages, selectedAi, results, aiQcReports };
+  logEl.textContent += documents.length >= 2
+    ? `\n📋 Batch queue: ${documents.length} label(s) — running one-by-one in this tab (pipeline ${PIPELINE_BUILD}).\n`
+    : `\n`;
+
   if (useLLM) {
-    // Shared across every document's pState so the bar can sum fractional
-    // progress across all of them — see the comment on updateAiProgress().
+    // Always sequential (concurrency 1). Batch wizard shows per-file status
+    // and commits successful rows to the table as each file finishes.
     const pool = documents.map((doc, i) => ({
       fileIndex: i, totalFiles: documents.length, fileName: doc.fileName,
       step: 0, maxSteps: AI_STEPS_PER_DOC, pool: null
     }));
     pool.forEach(p => { p.pool = pool; });
 
-    let nextIndex = 0;
-    async function worker() {
-      while (nextIndex < documents.length) {
-        const docIndex = nextIndex++;
-        const doc = documents[docIndex];
-        prepDoc(doc);
-        const pState = pool[docIndex];
-        updateAiProgress(pState, "starting");
-        logEl.textContent += `\n→ ${doc.fileName}: extracting with AI — extraction agent runs first, then an independent QC agent (reads the full label and applies extraction-rules.md / derivation-rules.md)…\n`;
-        let lastErr = null;
-        let result = null;
-        for (let attempt = 1; attempt <= FILE_EXTRACT_MAX_ATTEMPTS; attempt++) {
-          try {
-            if (attempt > 1) {
-              logEl.textContent += `   ↻ retrying ${doc.fileName} (attempt ${attempt}/${FILE_EXTRACT_MAX_ATTEMPTS})…\n`;
-              pState.step = 0;
-            }
-            result = await extractWithLLM(doc, pState);
-            lastErr = null;
-            break;
-          } catch (err) {
-            lastErr = err;
-            console.error(err);
-            logEl.textContent += `   ⚠ ${doc.fileName} attempt ${attempt}/${FILE_EXTRACT_MAX_ATTEMPTS} failed — ${err.message}\n`;
+    async function runOneDoc(docIndex) {
+      const doc = documents[docIndex];
+      prepDoc(doc);
+      const pState = pool[docIndex];
+      pState.step = 0;
+      setBatchItem(docIndex, "running", "Extracting with AI…");
+      updateAiProgress(pState, "starting");
+      logEl.textContent += `\n→ ${doc.fileName}: extracting with AI — extraction agent runs first, then an independent QC agent (reads the full label and applies extraction-rules.md / derivation-rules.md)…\n`;
+      let lastErr = null;
+      let result = null;
+      for (let attempt = 1; attempt <= FILE_EXTRACT_MAX_ATTEMPTS; attempt++) {
+        try {
+          if (attempt > 1) {
+            logEl.textContent += `   ↻ retrying ${doc.fileName} (attempt ${attempt}/${FILE_EXTRACT_MAX_ATTEMPTS})…\n`;
+            setBatchItem(docIndex, "running", `Retry ${attempt}/${FILE_EXTRACT_MAX_ATTEMPTS}…`);
+            pState.step = 0;
           }
-        }
-        if (result) {
-          logEl.textContent += `   ${doc.fileName}: ${result.rows.length} use row(s) returned after the full pipeline\n`;
-          results[docIndex] = {
-            rows: result.rows,
-            qcReport: result.qcReport,
-            remediationCycles: result.remediationCycles,
-            failed: false
-          };
-        } else {
-          // Fail loud — do not invent an all-NS placeholder row for this file.
-          pState.step = pState.maxSteps;
-          updateAiProgress(pState, "AI extraction failed");
-          logEl.textContent += `✖ ${doc.fileName}: AI extraction failed after ${FILE_EXTRACT_MAX_ATTEMPTS} attempt(s) — ${lastErr?.message || "unknown error"}. No rows added for this file.\n`;
-          results[docIndex] = {
-            rows: [],
-            qcReport: null,
-            failed: true,
-            error: lastErr?.message || "AI extraction failed"
-          };
+          result = await extractWithLLM(doc, pState);
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          console.error(err);
+          logEl.textContent += `   ⚠ ${doc.fileName} attempt ${attempt}/${FILE_EXTRACT_MAX_ATTEMPTS} failed — ${err.message}\n`;
         }
       }
+      if (result) {
+        logEl.textContent += `   ${doc.fileName}: ${result.rows.length} use row(s) returned after the full pipeline\n`;
+        results[docIndex] = {
+          rows: result.rows,
+          qcReport: result.qcReport,
+          remediationCycles: result.remediationCycles,
+          failed: false
+        };
+        if (result.qcReport) {
+          aiQcReports.push({ fileName: doc.fileName, qcReport: result.qcReport });
+          reportQcSummary(doc.fileName, result.qcReport.overall, result.remediationCycles);
+        }
+        commitDocRowsToTable(doc, result.rows, selectedAi);
+        setBatchItem(docIndex, "done", `${result.rows.length} row(s)`);
+        window.__useSummaryRows = allRows;
+        window.__aiQcReports = aiQcReports;
+        showResults();
+      } else {
+        pState.step = pState.maxSteps;
+        updateAiProgress(pState, "AI extraction failed");
+        logEl.textContent += `✖ ${doc.fileName}: AI extraction failed after ${FILE_EXTRACT_MAX_ATTEMPTS} attempt(s) — ${lastErr?.message || "unknown error"}. No rows added for this file.\n`;
+        results[docIndex] = {
+          rows: [],
+          qcReport: null,
+          failed: true,
+          error: lastErr?.message || "AI extraction failed"
+        };
+        setBatchItem(docIndex, "failed", lastErr?.message || "AI extraction failed");
+      }
     }
-    await Promise.all(Array.from({ length: Math.min(EXTRACTION_CONCURRENCY, documents.length) }, worker));
+
+    for (let docIndex = 0; docIndex < documents.length; docIndex++) {
+      await runOneDoc(docIndex);
+    }
   } else {
     // The regex/heuristic path is synchronous CPU work, not network I/O, so
     // running it "concurrently" on JS's single thread wouldn't save any wall
@@ -5805,6 +5934,7 @@ async function finishRun(documents, totalPages, selectedAi) {
     for (let docIndex = 0; docIndex < documents.length; docIndex++) {
       const doc = documents[docIndex];
       prepDoc(doc);
+      setBatchItem(docIndex, "running", "Parsing (regex)…");
       const sections = findUseSections(doc.fullText);
       const byDetector = sections.reduce((acc, s) => {
         const k = s.detector || "unknown";
@@ -5815,49 +5945,30 @@ async function finishRun(documents, totalPages, selectedAi) {
       logEl.textContent += `\n→ ${doc.fileName}: ${rows.length} use row(s) parsed\n`;
       logEl.textContent += `   section detectors: ${Object.entries(byDetector).map(([k, n]) => `${k}=${n}`).join(", ") || "none"}\n`;
       setProgress(((docIndex + 1) / documents.length) * 100);
-      results[docIndex] = { rows, qcReport: null };
+      results[docIndex] = { rows, qcReport: null, failed: false };
+      commitDocRowsToTable(doc, rows, selectedAi);
+      setBatchItem(docIndex, "done", `${rows.length} row(s)`);
+      window.__useSummaryRows = allRows;
+      showResults();
     }
   }
 
   const failedFiles = [];
   for (let docIndex = 0; docIndex < documents.length; docIndex++) {
-    const doc = documents[docIndex];
-    const { rows, qcReport, remediationCycles, failed, error } = results[docIndex];
-    if (failed) {
-      failedFiles.push({ fileName: doc.fileName, error: error || "AI extraction failed" });
-      continue;
+    const entry = results[docIndex];
+    if (entry?.failed) {
+      failedFiles.push({
+        fileName: documents[docIndex].fileName,
+        error: entry.error || "AI extraction failed"
+      });
     }
-    if (qcReport) {
-      aiQcReports.push({ fileName: doc.fileName, qcReport });
-      reportQcSummary(doc.fileName, qcReport.overall, remediationCycles);
-    }
-
-    allRows.push(...rows);
-    allRows.slice(-rows.length).forEach(sanitizeRowForEpa);
-    if (selectedAi) {
-      logEl.textContent += `   active ingredient: ${selectedAi}\n`;
-    }
-    // Show the conversion basis so lb a.i./A values can be rechecked by hand.
-    logEl.textContent += doc.__aiConc
-      ? `   a.i. concentration read from label: ${round3(doc.__aiConc)} lb a.i./gal `
-        + `— lb a.i./A = (fl oz/A ÷ 128) × ${round3(doc.__aiConc)}\n`
-      : `   a.i. concentration not stated on this label — lb a.i./A left NS (R19)\n`;
-    rows.forEach(r => {
-      logEl.textContent += `   • ${r["Use"]} — ${r["App. Target"]}/${r["App. Type"]} | rate: ${r["App Rate (lb ai/A)"]} | PHI: ${r["PHI (days)"]} | REI: ${r["REI"]}\n`;
-      // R24 — name the rule behind every derived value so it can be reviewed.
-      const drv = Object.entries(r.__derived || {});
-      if (drv.length) {
-        logEl.textContent += `       derived: ${drv.map(([c, id]) => `${c}="${r[c]}" (${id})`).join("; ")}\n`;
-      }
-    });
-    console.table(rows);
   }
 
   if (failedFiles.length) {
     const detail = failedFiles.map(f => `${f.fileName} (${f.error})`).join("; ");
     logEl.textContent += `\n✖ ${failedFiles.length} file(s) failed AI extraction (no placeholder NS rows): ${detail}\n`;
     showNotice(
-      `${failedFiles.length} file(s) failed AI extraction and were omitted from the table: ${failedFiles.map(f => f.fileName).join(", ")}. Successful files are shown below — re-run the failed file(s) alone.`,
+      `${failedFiles.length} file(s) failed AI extraction and were omitted from the table: ${failedFiles.map(f => f.fileName).join(", ")}. Use Retry failed in the batch queue, or re-run those file(s) alone.`,
       "error"
     );
   }
@@ -6281,10 +6392,114 @@ if (jobIdParam) {
       runBgBtn.style.display = "none";
       jobHistoryBtn.style.display = "none";
       lastJobBannerEl.style.display = "none";
-      runBtn.title = "Run extraction (interactive). Background jobs are not enabled on this host yet.";
+      runBtn.title = "Run extraction one label at a time (batch queue). Background jobs are not enabled on this host yet.";
     }
   } catch (_) { /* offline / file:// / Cloudflare without /api/features */ }
 })();
+
+async function retryBatchDocIndices(docIndices) {
+  if (!batchRunContext || !docIndices.length) return;
+  const { documents, selectedAi, results, aiQcReports } = batchRunContext;
+  runBtn.disabled = clearBtn.disabled = runBgBtn.disabled = true;
+  batchRetryFailedBtn.disabled = true;
+
+  for (const docIndex of docIndices) {
+    const doc = documents[docIndex];
+    if (!doc) continue;
+    allRows = allRows.filter(r => r["Source File"] !== doc.fileName);
+    for (let i = aiQcReports.length - 1; i >= 0; i--) {
+      if (aiQcReports[i].fileName === doc.fileName) aiQcReports.splice(i, 1);
+    }
+    doc.selectedAi = selectedAi;
+    doc.__aiConc = undefined;
+    doc.__restr = undefined;
+    doc.__ppe = undefined;
+    doc.__equip = undefined;
+    doc.__physicalForm = undefined;
+
+    const pState = {
+      fileIndex: docIndex,
+      totalFiles: documents.length,
+      fileName: doc.fileName,
+      step: 0,
+      maxSteps: AI_STEPS_PER_DOC,
+      pool: null
+    };
+    pState.pool = [pState];
+    setBatchItem(docIndex, "running", "Retrying…");
+    logEl.textContent += `\n↻ Retry ${doc.fileName} from batch queue…\n`;
+
+    let lastErr = null;
+    let result = null;
+    for (let attempt = 1; attempt <= FILE_EXTRACT_MAX_ATTEMPTS; attempt++) {
+      try {
+        if (attempt > 1) {
+          logEl.textContent += `   ↻ retrying ${doc.fileName} (attempt ${attempt}/${FILE_EXTRACT_MAX_ATTEMPTS})…\n`;
+          setBatchItem(docIndex, "running", `Retry ${attempt}/${FILE_EXTRACT_MAX_ATTEMPTS}…`);
+          pState.step = 0;
+        }
+        result = await extractWithLLM(doc, pState);
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        console.error(err);
+        logEl.textContent += `   ⚠ ${doc.fileName} attempt ${attempt}/${FILE_EXTRACT_MAX_ATTEMPTS} failed — ${err.message}\n`;
+      }
+    }
+
+    if (result) {
+      results[docIndex] = {
+        rows: result.rows,
+        qcReport: result.qcReport,
+        remediationCycles: result.remediationCycles,
+        failed: false
+      };
+      if (result.qcReport) {
+        aiQcReports.push({ fileName: doc.fileName, qcReport: result.qcReport });
+        reportQcSummary(doc.fileName, result.qcReport.overall, result.remediationCycles);
+      }
+      commitDocRowsToTable(doc, result.rows, selectedAi);
+      setBatchItem(docIndex, "done", `${result.rows.length} row(s)`);
+    } else {
+      results[docIndex] = {
+        rows: [],
+        qcReport: null,
+        failed: true,
+        error: lastErr?.message || "AI extraction failed"
+      };
+      setBatchItem(docIndex, "failed", lastErr?.message || "AI extraction failed");
+    }
+    window.__useSummaryRows = allRows;
+    window.__aiQcReports = aiQcReports;
+    showResults();
+  }
+
+  const stillFailed = batchQueue.filter(b => b.status === "failed");
+  if (stillFailed.length) {
+    showNotice(
+      `${stillFailed.length} file(s) still failed: ${stillFailed.map(b => b.fileName).join(", ")}.`,
+      "error"
+    );
+  } else {
+    showNotice(`Retry finished — ${allRows.length} row(s) in the table.`, "ok");
+  }
+  runBtn.disabled = clearBtn.disabled = runBgBtn.disabled = false;
+  batchRetryFailedBtn.disabled = false;
+}
+
+batchRetryFailedBtn.addEventListener("click", () => {
+  const indices = batchQueue.filter(b => b.status === "failed").map(b => b.docIndex);
+  retryBatchDocIndices(indices);
+});
+
+batchListEl.addEventListener("click", e => {
+  const btn = e.target.closest(".batch-retry-one");
+  if (!btn) return;
+  const docIndex = Number(btn.getAttribute("data-doc-index"));
+  if (!Number.isFinite(docIndex)) return;
+  retryBatchDocIndices([docIndex]);
+});
 </script>
 </body>
 </html>
