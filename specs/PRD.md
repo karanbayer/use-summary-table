@@ -209,11 +209,13 @@ them.
 
 **R23 · The analyst names the active ingredient when a label has several.** A rate in lb a.i./A
 is meaningless without knowing which active it refers to. When the label declares more than one
-active ingredient, the tool pauses after reading the PDF, lists the actives it found, and asks
-which one to report. Rates are then calculated against that active's stated concentration only.
+active ingredient, the tool pauses after reading that file, lists the actives it found, and asks
+which one to report. In a multi-file batch each multi-active label is prompted on its own before
+that file is extracted. Rates are then calculated against that active's stated concentration only.
 When only one active is declared, no question is asked.
 *Verify:* Load a multi-active label. Extraction stops and offers a choice. Pick one; the run
-completes and the log names the active and the concentration used.
+completes and the log names the active and the concentration used. With several files, each
+multi-active file prompts separately.
 
 **R24 · Convention-derived columns are filled from stated evidence, and marked as derived.**
 Three columns — Use Site, App. Type and App. Timing (Site Status) — are rarely printed as
@@ -296,7 +298,7 @@ visible. No requirement is marked PASS on the strength of reading a function alo
 | R20 · Crop names kept whole | PASS | `TREE NUTS (Crop Group 14-12) - EXCEPT ALMOND`, `LOW GROWING BERRY (Crop Subgroup 13-07G) - EXCEPT CRANBERRY` and `ROOT VEGETABLES - EXCEPT SUGARBEET (Subgroup 1B)` all retain their exception text. |
 | R21 · Conditional values kept whole | **FAIL** | The `phi` pattern's `[^.;\n]` bounds stop at `;`, so a split PHI such as the golden's `7 (forage/fresh seed); 21 (dry soybean seed)` can only ever capture its first clause. See below. |
 | R22 · Per-cycle and per-year tracked separately | PASS | C.C. and Yr. columns are populated independently, and `Max No. of CC/yr` is filled (1 or 3) per the label. |
-| R23 · Analyst names the active ingredient | PASS | `findActiveIngredients()` runs before extraction; SIVANTO declares one active, so no prompt appeared and the run continued — the specified single-active behaviour. |
+| R23 · Analyst names the active ingredient | PASS | `promptActiveIngredientForDoc()` pauses per multi-active file; SIVANTO declares one active, so no prompt and the run continues. Batch runs prompt each multi-active label on its own. |
 | R24 · Derived columns marked | PASS | `Use Site`, `App. Type` and `App. Timing (Site Status)` populate from `knowledge/derivation-rules.md`, are marked derived on screen, and export via the `Derived Fields` column. |
 
 **Boundaries** hold: no server, database, sign-in or third-party API. PDF.js and SheetJS are the

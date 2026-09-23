@@ -158,7 +158,7 @@ R14 = Inline editing · R15 = OCR fallback · R16 = Expanded crop vocabulary · 
 [x] Task 26: Ask which active ingredient to report when a label declares several
     Satisfies: R23
     Done when: a multi-active label pauses the run, lists the actives, and calculates rates only against the chosen one; a single-active label runs straight through unchanged.
-    Note: done. `findActiveIngredients()` reads the ingredient panel; `concentrationForAi()` scopes the concentration to the chosen active and falls back to the label-wide statement. The run handler was split so `finishRun()` can be resumed from the picker.
+    Note: done. `findActiveIngredients()` reads the ingredient panel; `concentrationForAi()` scopes the concentration to the chosen active and falls back to the label-wide statement. `promptActiveIngredientForDoc()` pauses per file (Promise + Confirm), so a batch of mixed single/multi-active labels each gets its own choice before extract — not only `documents[0]`. Background submit and batch retry reuse `doc.selectedAi`.
 
 [x] Task 27: Fill the convention-derived columns from stated evidence
     Satisfies: R24

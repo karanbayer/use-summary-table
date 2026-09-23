@@ -585,7 +585,7 @@
     <!-- R19 — when a label lists more than one active ingredient, the rate
          conversion is ambiguous, so the analyst must choose. -->
     <div class="notice" id="aiPicker" role="group" aria-label="Active ingredient choice" style="display:none;align-items:flex-start;flex-direction:column;gap:8px">
-      <strong>This label lists more than one active ingredient.</strong>
+      <strong id="aiPickerTitle">This label lists more than one active ingredient.</strong>
       <span class="sub" id="aiPickerText"></span>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <label for="aiSelect">Report results for:</label>
@@ -1046,10 +1046,46 @@ jobHistoryClearBtn.addEventListener("click", () => {
 
 // R19 — active-ingredient confirmation
 const aiPicker     = document.getElementById("aiPicker");
+const aiPickerTitle = document.getElementById("aiPickerTitle");
 const aiPickerText = document.getElementById("aiPickerText");
 const aiSelect     = document.getElementById("aiSelect");
 const aiConfirmBtn = document.getElementById("aiConfirmBtn");
-let pendingRun = null;   // run parked awaiting the analyst's choice
+let pendingRun = null;   // legacy park for background pre-submit (unused once per-file picker is used)
+/** @type {((name: string|null) => void)|null} */
+let aiPickerResolve = null;
+
+/**
+ * R19 — if this document lists multiple actives, pause for an analyst choice.
+ * Resolves to the chosen name, or the sole active, or null.
+ */
+function promptActiveIngredientForDoc(doc, docIndex) {
+  const actives = findActiveIngredients(doc.fullText || "");
+  if (actives.length <= 1) {
+    return Promise.resolve(actives[0] ? actives[0].name : null);
+  }
+  return new Promise(resolve => {
+    aiPickerResolve = resolve;
+    if (typeof docIndex === "number") {
+      setBatchItem(docIndex, "running", "Choose active ingredient…");
+    }
+    barEl.style.display = "none";
+    statusEl.textContent = `Waiting for active ingredient — ${doc.fileName}`;
+    logEl.textContent += `\n⏸ ${doc.fileName}: ${actives.length} active ingredients found: `
+      + actives.map(a => a.name).join(", ")
+      + `\n   Rates can only be expressed for one active — choose one to continue (R19).\n`;
+    aiPickerTitle.textContent = `${doc.fileName} lists more than one active ingredient.`;
+    aiSelect.innerHTML = actives.map(a =>
+      `<option value="${esc(a.name)}">${esc(a.name)}`
+      + `${a.percent ? ` — ${a.percent}%` : ""}`
+      + `${a.lbPerGal ? ` (${a.lbPerGal} lb/gal)` : ""}</option>`
+    ).join("");
+    aiPickerText.textContent =
+      `Rates in lb a.i./A can only be calculated for one active at a time. `
+      + `Pick the one you want reported for this file; the others are left out of the rate columns.`;
+    aiPicker.style.display = "flex";
+    aiPicker.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
+}
 const logEl    = document.getElementById("log");
 
 // AI extraction — reads label prose and reasons through EXTRACTION_RULES_MD /
@@ -1091,6 +1127,11 @@ clearBtn.addEventListener("click", () => {
   files = []; input.value = "";
   aiPicker.style.display = "none";
   pendingRun = null;
+  if (aiPickerResolve) {
+    const resolve = aiPickerResolve;
+    aiPickerResolve = null;
+    resolve(null);
+  }
   batchQueue = [];
   batchRunContext = null;
   renderBatchWizard();
@@ -3260,11 +3301,12 @@ function buildReviewStations(context) {
       render: () => {
         const docsHtml = documents.map(d =>
           `<div class="mini-card"><div class="meta">${esc(d.fileName)}</div>` +
-          `<div>Pages: <b>${d.numPages}</b> · Product: <b>${esc(findProductName(d.fullText) || NOT_SPECIFIED)}</b></div></div>`
+          `<div>Pages: <b>${d.numPages}</b> · Product: <b>${esc(findProductName(d.fullText) || NOT_SPECIFIED)}</b></div>` +
+          `<div>Active ingredient: <b>${esc(d.selectedAi || "Auto (single active)")}</b></div></div>`
         ).join("");
         const forms = [...new Set(allRows.map(r => r["Physical Form"]))].join(", ");
         return docsHtml +
-          `<div class="mini-card"><div>Selected active ingredient: <b>${esc(context.selectedAi || "Auto (single active)")}</b></div>` +
+          `<div class="mini-card">` +
           `<div>Reg # values seen: <b>${esc([...new Set(allRows.map(r => r["Reg. #/File Sym"]))].join(", "))}</b></div>` +
           `<div>Physical form values seen: <b>${esc(forms || NOT_SPECIFIED)}</b></div></div>`;
       }
@@ -4177,31 +4219,8 @@ runBtn.addEventListener("click", async () => {
 
   window.__extractedDocuments = documents; // raw page text
 
-  // R19 — if the label names several actives, the rate conversion is
-  // ambiguous. Stop and let the analyst pick before parsing.
-  const actives = documents.length
-    ? findActiveIngredients(documents[0].fullText)
-    : [];
-  if (actives.length > 1) {
-    barEl.style.display = "none";
-    statusEl.textContent = "Waiting for active ingredient confirmation…";
-    logEl.textContent += `\n⏸ ${actives.length} active ingredients found: `
-      + actives.map(a => a.name).join(", ")
-      + `\n   Rates can only be expressed for one active — choose one to continue (R19).\n`;
-    aiSelect.innerHTML = actives.map(a =>
-      `<option value="${esc(a.name)}">${esc(a.name)}`
-      + `${a.percent ? ` — ${a.percent}%` : ""}`
-      + `${a.lbPerGal ? ` (${a.lbPerGal} lb/gal)` : ""}</option>`
-    ).join("");
-    aiPickerText.textContent =
-      `Rates in lb a.i./A can only be calculated for one active at a time. `
-      + `Pick the one you want reported; the others are left out of the rate columns.`;
-    aiPicker.style.display = "flex";
-    pendingRun = { documents, totalPages };
-    return;                    // resumes in the Confirm handler
-  }
-
-  await finishRun(documents, totalPages, actives[0] ? actives[0].name : null);
+  // Per-file active-ingredient choice happens inside finishRun (R19).
+  await finishRun(documents, totalPages, null);
 });
 
 // Background jobs — same file-reading and active-ingredient-ambiguity flow
@@ -4250,29 +4269,13 @@ runBgBtn.addEventListener("click", async () => {
 
   window.__extractedDocuments = documents;
 
-  const actives = documents.length
-    ? findActiveIngredients(documents[0].fullText)
-    : [];
-  if (actives.length > 1) {
-    barEl.style.display = "none";
-    statusEl.textContent = "Waiting for active ingredient confirmation…";
-    logEl.textContent += `\n⏸ ${actives.length} active ingredients found: `
-      + actives.map(a => a.name).join(", ")
-      + `\n   Rates can only be expressed for one active — choose one to continue (R19).\n`;
-    aiSelect.innerHTML = actives.map(a =>
-      `<option value="${esc(a.name)}">${esc(a.name)}`
-      + `${a.percent ? ` — ${a.percent}%` : ""}`
-      + `${a.lbPerGal ? ` (${a.lbPerGal} lb/gal)` : ""}</option>`
-    ).join("");
-    aiPickerText.textContent =
-      `Rates in lb a.i./A can only be calculated for one active at a time. `
-      + `Pick the one you want reported; the others are left out of the rate columns.`;
-    aiPicker.style.display = "flex";
-    pendingRun = { documents, totalPages, mode: "background" };
-    return;                    // resumes in the Confirm handler
+  // R23 — prompt per file before queueing so each label can name its own active.
+  for (let i = 0; i < documents.length; i++) {
+    documents[i].selectedAi = await promptActiveIngredientForDoc(documents[i], i);
+    aiPicker.style.display = "none";
   }
-
-  await submitBackgroundJob(documents, totalPages, actives[0] ? actives[0].name : null);
+  barEl.style.display = "block";
+  await submitBackgroundJob(documents, totalPages, null);
 });
 
 /** Reads a label's full text via /api/extract — a same-origin Cloudflare
@@ -4366,7 +4369,7 @@ const REMEDIATION_MAX_CYCLES = 1;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-09-23g";
+const PIPELINE_BUILD = "2026-09-23h";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -4389,6 +4392,47 @@ const FILE_EXTRACT_MAX_ATTEMPTS = 2;
 // straight past whatever steps a stage skipped, rather than leaving it
 // stalled at whatever step count the loop happened to exit on.
 const AI_STEPS_PER_DOC = 1 + 1 + (REMEDIATION_MAX_CYCLES * 2);
+
+/** Format ms for run-log timing lines (measure before optimizing). */
+function formatPipelineMs(ms) {
+  const n = Math.max(0, Math.round(ms));
+  if (n < 1000) return `${n}ms`;
+  return `${(n / 1000).toFixed(1)}s`;
+}
+
+/**
+ * Per-file wall-clock stages for extractWithLLM. Lets us see whether extract,
+ * QC, or remediation dominates before cutting calls or changing models.
+ */
+function createPipelineTimer(fileName) {
+  const t0 = (typeof performance !== "undefined" && performance.now)
+    ? performance.now()
+    : Date.now();
+  const marks = [];
+  const now = () => ((typeof performance !== "undefined" && performance.now)
+    ? performance.now()
+    : Date.now());
+  return {
+    mark(label) {
+      marks.push({ label, at: now() - t0 });
+    },
+    /** Returns { totalMs, stages: [{label, ms}] } and appends a log line. */
+    finish(extra) {
+      const totalMs = now() - t0;
+      let prev = 0;
+      const stages = marks.map(m => {
+        const ms = m.at - prev;
+        prev = m.at;
+        return { label: m.label, ms };
+      });
+      const parts = stages.map(s => `${s.label} ${formatPipelineMs(s.ms)}`);
+      logEl.textContent += `   ⏱ ${fileName}: ${parts.join(" · ")} · total ${formatPipelineMs(totalMs)}`
+        + (extra ? ` · ${extra}` : "")
+        + `\n`;
+      return { totalMs, stages };
+    }
+  };
+}
 
 // M1 (extended) — during AI extraction, the bar and status/placeholder text
 // track progress across every file and every pipeline stage, not just the
@@ -5748,6 +5792,7 @@ function buildAppRows(rawRows, doc) {
 // extraction-main.agent.md / QC-agent.agent.md, ported into this app's
 // actual runtime path instead of a manually-driven Copilot Chat session.
 async function extractWithLLM(doc, pState) {
+  const timer = createPipelineTimer(doc.fileName);
   const pageMarkedText = doc.pages
     .map((text, i) => `--- PAGE ${i + 1} ---\n${text}`)
     .join("\n\n");
@@ -5771,6 +5816,7 @@ async function extractWithLLM(doc, pState) {
   }
   advanceAiProgress(pState, 1, "extraction complete (stage 1/3)");
   logEl.textContent += `   ${allRawRows.length} row(s) from two-pass extraction (all chunks)\n`;
+  timer.mark(`extract(${chunks.length}ch)`);
 
   // QC still sees as much label text as fits; output is small so truncation risk is lower.
   const QC_MAX_CHARS = 150000;
@@ -5783,6 +5829,7 @@ async function extractWithLLM(doc, pState) {
 
   logEl.textContent += `   stage 2/3 — independent QC review (Opus, Sonnet fallback)…\n`;
   const qc = await runQcTurn(allRawRows, doc, qcLabelText, systemBlocks, tools, pState);
+  timer.mark("qc");
 
   logEl.textContent += qcNeedsRemediation(qc.qcReport)
     ? `   stage 3/3 — bounded remediation on Opus (up to ${REMEDIATION_MAX_CYCLES} cycle(s))…\n`
@@ -5795,6 +5842,7 @@ async function extractWithLLM(doc, pState) {
     advanceAiProgress(pState, REMEDIATION_MAX_CYCLES * 2, "remediation failed (stage 3/3)");
     remediated = { rawRows: allRawRows, qcReport: qc.qcReport, cycles: 0 };
   }
+  timer.mark(remediated.cycles ? `remediate×${remediated.cycles}` : "remediate(skip)");
 
   pState.step = pState.maxSteps;
   updateAiProgress(pState, "file complete");
@@ -5803,11 +5851,19 @@ async function extractWithLLM(doc, pState) {
   if (!rows.length || isMostlyEmptyNsRows(remediated.rawRows)) {
     throw new Error("Final row set is empty or NS-only — not treating as a successful extract");
   }
-  return { rows, qcReport: remediated.qcReport, remediationCycles: remediated.cycles };
+  const timing = timer.finish(
+    `${rows.length} row(s), QC ${remediated.qcReport?.overall || "?"}`
+  );
+  return {
+    rows,
+    qcReport: remediated.qcReport,
+    remediationCycles: remediated.cycles,
+    timing
+  };
 }
 
-/** Parse, render and report. Split out so the AI picker can resume it. */
-async function finishRun(documents, totalPages, selectedAi) {
+/** Parse, render and report. selectedAi is unused — each doc picks its own (R23). */
+async function finishRun(documents, totalPages, _selectedAi) {
   aiPicker.style.display = "none";
   pendingRun = null;
 
@@ -5859,9 +5915,9 @@ async function finishRun(documents, totalPages, selectedAi) {
   const results = new Array(documents.length);
 
   function prepDoc(doc) {
-    doc.selectedAi = selectedAi;
     // Clear the whole doc.__* cache group, not just the two that obviously
     // depend on the active ingredient — see the convention note above.
+    // doc.selectedAi is already set by ensureSelectedAiForDoc().
     doc.__aiConc = undefined;
     doc.__restr  = undefined;
     doc.__ppe    = undefined;
@@ -5869,8 +5925,18 @@ async function finishRun(documents, totalPages, selectedAi) {
     doc.__physicalForm = undefined;
   }
 
+  /** R23 — pause for a choice when this file lists several actives. */
+  async function ensureSelectedAiForDoc(doc, docIndex) {
+    if (Object.prototype.hasOwnProperty.call(doc, "selectedAi")) return doc.selectedAi;
+    const chosen = await promptActiveIngredientForDoc(doc, docIndex);
+    doc.selectedAi = chosen;
+    aiPicker.style.display = "none";
+    barEl.style.display = "block";
+    return chosen;
+  }
+
   initBatchQueue(documents);
-  batchRunContext = { documents, totalPages, selectedAi, results, aiQcReports };
+  batchRunContext = { documents, totalPages, selectedAi: null, results, aiQcReports };
   logEl.textContent += documents.length >= 2
     ? `\n📋 Batch queue: ${documents.length} label(s) — running one-by-one in this tab (pipeline ${PIPELINE_BUILD}).\n`
     : `\n`;
@@ -5886,6 +5952,7 @@ async function finishRun(documents, totalPages, selectedAi) {
 
     async function runOneDoc(docIndex) {
       const doc = documents[docIndex];
+      await ensureSelectedAiForDoc(doc, docIndex);
       prepDoc(doc);
       const pState = pool[docIndex];
       pState.step = 0;
@@ -5916,13 +5983,14 @@ async function finishRun(documents, totalPages, selectedAi) {
           rows: result.rows,
           qcReport: result.qcReport,
           remediationCycles: result.remediationCycles,
+          timing: result.timing || null,
           failed: false
         };
         if (result.qcReport) {
           aiQcReports.push({ fileName: doc.fileName, qcReport: result.qcReport });
           reportQcSummary(doc.fileName, result.qcReport.overall, result.remediationCycles);
         }
-        commitDocRowsToTable(doc, result.rows, selectedAi);
+        commitDocRowsToTable(doc, result.rows, doc.selectedAi);
         setBatchItem(docIndex, "done", `${result.rows.length} row(s)`);
         window.__useSummaryRows = allRows;
         window.__aiQcReports = aiQcReports;
@@ -5950,6 +6018,7 @@ async function finishRun(documents, totalPages, selectedAi) {
     // time — it stays a plain sequential loop.
     for (let docIndex = 0; docIndex < documents.length; docIndex++) {
       const doc = documents[docIndex];
+      await ensureSelectedAiForDoc(doc, docIndex);
       prepDoc(doc);
       setBatchItem(docIndex, "running", "Parsing (regex)…");
       const sections = findUseSections(doc.fullText);
@@ -5963,7 +6032,7 @@ async function finishRun(documents, totalPages, selectedAi) {
       logEl.textContent += `   section detectors: ${Object.entries(byDetector).map(([k, n]) => `${k}=${n}`).join(", ") || "none"}\n`;
       setProgress(((docIndex + 1) / documents.length) * 100);
       results[docIndex] = { rows, qcReport: null, failed: false };
-      commitDocRowsToTable(doc, rows, selectedAi);
+      commitDocRowsToTable(doc, rows, doc.selectedAi);
       setBatchItem(docIndex, "done", `${rows.length} row(s)`);
       window.__useSummaryRows = allRows;
       showResults();
@@ -5988,6 +6057,30 @@ async function finishRun(documents, totalPages, selectedAi) {
       `${failedFiles.length} file(s) failed AI extraction and were omitted from the table: ${failedFiles.map(f => f.fileName).join(", ")}. Use Retry failed in the batch queue, or re-run those file(s) alone.`,
       "error"
     );
+  }
+
+  // Batch timing rollup — sum of per-file extract/qc/remediate stages.
+  if (useLLM) {
+    const stageTotals = {};
+    let batchMs = 0;
+    let timedFiles = 0;
+    results.forEach(entry => {
+      if (!entry?.timing) return;
+      timedFiles++;
+      batchMs += entry.timing.totalMs || 0;
+      (entry.timing.stages || []).forEach(s => {
+        const key = String(s.label || "").replace(/\(.*$/, "").replace(/×\d+$/, "") || "other";
+        stageTotals[key] = (stageTotals[key] || 0) + (s.ms || 0);
+      });
+    });
+    if (timedFiles) {
+      const stagePart = Object.entries(stageTotals)
+        .map(([k, ms]) => `${k} ${formatPipelineMs(ms)}`)
+        .join(" · ");
+      logEl.textContent += `\n⏱ Batch (${timedFiles} file(s), pipeline ${PIPELINE_BUILD}): `
+        + `${stagePart} · wall ${formatPipelineMs(batchMs)}\n`;
+      window.__pipelineTiming = { timedFiles, batchMs, stageTotals, results: results.map(r => r?.timing || null) };
+    }
   }
 
   window.__useSummaryRows = allRows;
@@ -6198,14 +6291,17 @@ async function submitBackgroundJob(documents, totalPages, selectedAi) {
           body: JSON.stringify({
             jobId, fileIndex, totalFiles,
             fileName: doc.fileName, pageMarkedText,
-            selectedAi: selectedAi || null, createdAt
+            // Prefer per-file choice (R23); fall back to run-wide for older callers.
+            selectedAi: doc.selectedAi || selectedAi || null, createdAt
           })
         });
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
           throw new Error(body.error?.message || `HTTP ${response.status}`);
         }
-        logEl.textContent += `✔ ${doc.fileName}: queued for background processing\n`;
+        logEl.textContent += `✔ ${doc.fileName}: queued for background processing`
+          + (doc.selectedAi || selectedAi ? ` (AI: ${doc.selectedAi || selectedAi})` : "")
+          + `\n`;
       } catch (err) {
         failures.push({ fileName: doc.fileName, error: err.message });
         logEl.textContent += `✖ ${doc.fileName}: failed to queue — ${err.message}\n`;
@@ -6372,15 +6468,25 @@ function renderJobStatusView(jobId, runContext) {
   pollJobStatus(jobId, runContext);
 }
 
-// R19 — resume the run once the analyst has named the active ingredient.
+// R23 — resume once the analyst has named the active ingredient for the
+// current file (Promise from promptActiveIngredientForDoc), or legacy pendingRun.
 aiConfirmBtn.addEventListener("click", async () => {
-  if (!pendingRun) return;
-  barEl.style.display = "block";
-  const { documents, totalPages, mode } = pendingRun;
   const selectedAi = aiSelect.value;
+  aiPicker.style.display = "none";
+  barEl.style.display = "block";
+  if (aiPickerResolve) {
+    const resolve = aiPickerResolve;
+    aiPickerResolve = null;
+    resolve(selectedAi);
+    return;
+  }
+  if (!pendingRun) return;
+  const { documents, totalPages, mode } = pendingRun;
   if (mode === "background") {
+    documents.forEach(d => { if (!d.selectedAi) d.selectedAi = selectedAi; });
     await submitBackgroundJob(documents, totalPages, selectedAi);
   } else {
+    documents.forEach(d => { if (!d.selectedAi) d.selectedAi = selectedAi; });
     await finishRun(documents, totalPages, selectedAi);
   }
 });
@@ -6416,7 +6522,7 @@ if (jobIdParam) {
 
 async function retryBatchDocIndices(docIndices) {
   if (!batchRunContext || !docIndices.length) return;
-  const { documents, selectedAi, results, aiQcReports } = batchRunContext;
+  const { documents, results, aiQcReports } = batchRunContext;
   runBtn.disabled = clearBtn.disabled = runBgBtn.disabled = true;
   batchRetryFailedBtn.disabled = true;
 
@@ -6427,7 +6533,12 @@ async function retryBatchDocIndices(docIndices) {
     for (let i = aiQcReports.length - 1; i >= 0; i--) {
       if (aiQcReports[i].fileName === doc.fileName) aiQcReports.splice(i, 1);
     }
-    doc.selectedAi = selectedAi;
+    // Keep a prior choice (including null); only re-prompt if never asked (R23).
+    if (!Object.prototype.hasOwnProperty.call(doc, "selectedAi")) {
+      doc.selectedAi = await promptActiveIngredientForDoc(doc, docIndex);
+      aiPicker.style.display = "none";
+      barEl.style.display = "block";
+    }
     doc.__aiConc = undefined;
     doc.__restr = undefined;
     doc.__ppe = undefined;
@@ -6444,7 +6555,9 @@ async function retryBatchDocIndices(docIndices) {
     };
     pState.pool = [pState];
     setBatchItem(docIndex, "running", "Retrying…");
-    logEl.textContent += `\n↻ Retry ${doc.fileName} from batch queue…\n`;
+    logEl.textContent += `\n↻ Retry ${doc.fileName} from batch queue`
+      + (doc.selectedAi ? ` (AI: ${doc.selectedAi})` : "")
+      + `…\n`;
 
     let lastErr = null;
     let result = null;
@@ -6476,7 +6589,7 @@ async function retryBatchDocIndices(docIndices) {
         aiQcReports.push({ fileName: doc.fileName, qcReport: result.qcReport });
         reportQcSummary(doc.fileName, result.qcReport.overall, result.remediationCycles);
       }
-      commitDocRowsToTable(doc, result.rows, selectedAi);
+      commitDocRowsToTable(doc, result.rows, doc.selectedAi);
       setBatchItem(docIndex, "done", `${result.rows.length} row(s)`);
     } else {
       results[docIndex] = {
