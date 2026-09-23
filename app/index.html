@@ -4229,22 +4229,21 @@ const MAX_TOKENS = 64000;
 // to catch the class of error a single-shot extraction misses (evidence
 // borrowed from the wrong crop section, a rate ceiling conflated with an
 // annual cap, a crop named only inside another group's sentence). This cap
-// Pilot stream budget (Cloudflare + TrueFoundry / Agentrix):
-//   extract Sonnet (1) + QC Sonnet (1) + at most one Opus patch cycle (2) = ≤4
+// Pilot stream budget (Cloudflare + TrueFoundry):
+//   extract Sonnet (1) + QC Opus (1) + at most one Opus patch cycle (2) = ≤4
 //   Gateway calls when remediation runs; 2 when QC is clean.
 // Do not auto-force background — Run Extraction stays interactive; users opt
 // into Worker via "Run in background". Soft-warn above these sizes.
 const REMEDIATION_MAX_CYCLES = 1;
 
-// Stages 1–2 (extraction, independent QC) use Sonnet — Opus QC was 502'ing
-// on Agentrix/AI Gateway for large labels; Sonnet already succeeds for extract.
-// Stage 3 (remediation) still uses Opus when QC is Critical/High.
+// Stages 1–2 (extraction, independent QC) use Sonnet for latency on large
+// labels; stage 3 (remediation) uses Opus when QC is Critical/High.
 // Gateway model IDs are provider-prefixed (confirmed against
 // /v1/models on global.ai-gateway.int.bayer.ai).
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-09-23a";
+const PIPELINE_BUILD = "2026-09-22j";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -5033,7 +5032,7 @@ async function runQcTurn(rawRows, doc, pageMarkedText, systemBlocks, tools, pSta
   const messages = [
     { role: "user", content: buildDocMessageBlocks(doc, pageMarkedText, stageText) }
   ];
-  const { data, toolUse } = await callAnthropic(messages, systemBlocks, tools, "emit_qc_report", MODEL_STANDARD);
+  const { data, toolUse } = await callAnthropic(messages, systemBlocks, tools, "emit_qc_report", MODEL_ESCALATED);
   messages.push({ role: "assistant", content: data.content });
   advanceAiProgress(pState, 1, "QC review complete (stage 2/3)");
   return { messages, qcReport: toolUse.input || { overall: "Clean", defects: [] }, lastToolUseId: toolUse.id };
