@@ -4244,7 +4244,7 @@ const REMEDIATION_MAX_CYCLES = 1;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-09-23b";
+const PIPELINE_BUILD = "2026-09-23c";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -4545,7 +4545,7 @@ function buildDocMessageBlocks(doc, pageMarkedText, stageInstructionText) {
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 524]);
 const MAX_ATTEMPTS = 5;
 /** Opus QC tries this many times before falling back to Sonnet. */
-const QC_OPUS_MAX_ATTEMPTS = 3;
+const QC_OPUS_MAX_ATTEMPTS = 2;
 const RETRY_BASE_DELAY_MS = 2000;
 
 function sleep(ms) {
