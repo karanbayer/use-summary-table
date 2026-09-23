@@ -1091,6 +1091,9 @@ clearBtn.addEventListener("click", () => {
   files = []; input.value = "";
   aiPicker.style.display = "none";
   pendingRun = null;
+  batchQueue = [];
+  batchRunContext = null;
+  renderBatchWizard();
   render();
 });
 
@@ -4363,7 +4366,7 @@ const REMEDIATION_MAX_CYCLES = 1;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-09-23f";
+const PIPELINE_BUILD = "2026-09-23g";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -4446,8 +4449,9 @@ function buildSkeletonTool() {
   return {
     name: "emit_use_row_skeletons",
     description:
-      "Pass 1 of two-pass extraction: emit one skeleton per use + use site + application method. "
-      + "Fill only identity and method columns (and Page/Evidence). Do NOT emit rates, MRI, PHI, PPE details beyond product-level identity, or restriction prose — those come in pass 2.",
+      "Pass 1 only: list each distinct use + use site + application method as a skeleton. "
+      + "Columns limited to identity/method (+ Page, Evidence). "
+      + "Do not emit rates, MRI, PHI, PPE, or restriction text.",
     input_schema: {
       type: "object",
       properties: {
@@ -4483,9 +4487,9 @@ function buildRowSchemaTool() {
   return {
     name: "emit_use_summary_rows",
     description:
-      "Emit one complete Use Summary row per use + use site + application method (all schema columns). "
-      + "Also used as pass 2 of two-pass extraction: complete rates and restrictions for the skeletons from pass 1. "
-      + "During remediation, emit the complete corrected row set when required.",
+      "Emit complete Use Summary rows (all schema columns). "
+      + "Pass 2: one full row per pass-1 skeleton (same order); split only when the label requires distinct methods. "
+      + "Remediation: full corrected set only when asked. NS if silent, NA if not applicable — never blank.",
     input_schema: {
       type: "object",
       properties: {
@@ -4506,21 +4510,23 @@ function buildRowSchemaTool() {
 function buildQcReportTool() {
   return {
     name: "emit_qc_report",
-    description: "Report the result of an independent QC review across all 5 passes (structural, column-wise plausibility, row-wise verification, completeness, confidence calibration). Report only — do not correct rows in this call.",
+    description:
+      "Independent QC only: report overall severity and defects. Do not correct rows here. "
+      + "overall must be Clean, Low, Medium, High, or Critical (highest severity found).",
     input_schema: {
       type: "object",
       properties: {
         overall: {
           type: "string",
           enum: ["Clean", "Low", "Medium", "High", "Critical"],
-          description: "The highest severity defect found across all passes, or Clean if none."
+          description: "Highest severity across all passes, or Clean if none."
         },
         defects: {
           type: "array",
           items: {
             type: "object",
             properties: {
-              row_index: { type: "integer", description: "0-based index into the row set this defect applies to, or -1 for a missing-row gap." },
+              row_index: { type: "integer", description: "0-based row index, or -1 for a missing-row gap." },
               column: { type: "string" },
               severity: { type: "string", enum: ["Low", "Medium", "High", "Critical"] },
               issue: { type: "string" }
@@ -5262,15 +5268,14 @@ async function extractChunkTwoPass(doc, chunk, chunkIndex, chunkCount, systemBlo
   const label = chunk.id;
   const chunkPreface = chunkCount === 1
     ? ""
-    : `This is extraction chunk ${chunkIndex + 1} of ${chunkCount} ("${label}"). `
-      + "Work from the CHUNK BODY only for uses; front-matter is for product identity. ";
+    : `Chunk ${chunkIndex + 1}/${chunkCount} ("${label}"). CHUNK BODY only for uses; front-matter = identity. `;
 
   const skeletonNote = [
-    chunkPreface + "Pass 1 of 2 — emit use-row SKELETONS only via emit_use_row_skeletons.",
+    chunkPreface + "Pass 1/2 — call emit_use_row_skeletons.",
     "One skeleton per use + use site + application method.",
-    `Fill only these columns: ${SKELETON_COLUMNS.join(", ")}, plus Page and Evidence.`,
-    "Do NOT fill rates, MRI, PHI, PPE paragraphs, or restriction columns in this pass.",
-    "Never invent a use; every skeleton must cite Page + Evidence from the label text."
+    `Columns: ${SKELETON_COLUMNS.join(", ")}, Page, Evidence.`,
+    "No rates, MRI, PHI, PPE prose, or restrictions in this pass.",
+    "Every skeleton needs Page + Evidence from this label."
   ].join(" ");
 
   const skTurn = await runSkeletonPass(doc, chunk.text, systemBlocks, tools, pState, skeletonNote);
@@ -5280,12 +5285,12 @@ async function extractChunkTwoPass(doc, chunk, chunkIndex, chunkCount, systemBlo
   logEl.textContent += `     pass 1 → ${skTurn.skeletons.length} skeleton(s)\n`;
 
   const detailNote = [
-    chunkPreface + "Pass 2 of 2 — complete FULL schema rows via emit_use_summary_rows.",
-    "Complete every schema column for each skeleton below (rates, intervals, PPE, restrictions, etc.).",
-    "Prefer one full row per skeleton, in the same order. Split a skeleton into multiple rows only when the label requires distinct application methods.",
-    "Never invent values — NS if silent, NA if not applicable.",
+    chunkPreface + "Pass 2/2 — call emit_use_summary_rows.",
+    "Fill all schema columns for each skeleton (rates, intervals, PPE, restrictions).",
+    "Same order as skeletons; split a row only when methods truly differ on the label.",
+    "NS if silent, NA if not applicable — never invent.",
     "",
-    "Skeletons from pass 1 (JSON):",
+    "Pass-1 skeletons (JSON):",
     JSON.stringify(skTurn.skeletons)
   ].join("\n");
 
@@ -5396,9 +5401,8 @@ function wrapChunkBody(frontMatter, bodyLabel, bodyText) {
     frontMatter,
     "",
     `--- CHUNK BODY (${bodyLabel}) ---`,
-    "Extract every use + use site + application method from the CHUNK BODY.",
-    "Use the front-matter pages only for product identity (Reg. #, PBN, Physical Form, PPE, REI, etc.).",
-    "Do not invent uses that are not supported by the CHUNK BODY.",
+    "Scope: extract ONLY uses evidenced in CHUNK BODY.",
+    "Front-matter = product identity (Reg. #, PBN, form, PPE/REI if product-wide) — not a source of extra crops.",
     "",
     bodyText
   ].join("\n");
@@ -5597,20 +5601,33 @@ async function runQcTurn(rawRows, doc, pageMarkedText, systemBlocks, tools, pSta
   return { messages, qcReport: toolUse.input || { overall: "Clean", defects: [] }, lastToolUseId: toolUse.id };
 }
 
-// Stage 3 — bounded remediation loop: only engages when QC found Critical/
-// High defects, and never blocks — whatever the final QC report says, rows
-// and report both flow through to rendering/export (see finishRun).
-// Opus applies targeted patches (not a full-table re-emit) so large labels
-// stay under the output-token limit; failures keep extraction rows.
+// Stage 3 — remediation runs ONLY for Critical/High QC. Clean, Low, and
+// Medium never enter the loop (no Opus patch calls). Informational defects
+// still surface in the UI via the QC report.
+function qcNeedsRemediation(qcReport) {
+  const overall = String(qcReport?.overall || "").trim();
+  return overall === "Critical" || overall === "High";
+}
+
 async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
   let { messages, qcReport, lastToolUseId } = state;
   let cycle = 0;
   let remediationStepsDone = 0;
-  const needsFix = r => r && (r.overall === "Critical" || r.overall === "High");
   const remediationModel = MODEL_ESCALATED;
   const remediationLabel = "Opus";
   let aborted = false;
-  while (needsFix(qcReport) && cycle < REMEDIATION_MAX_CYCLES) {
+
+  if (!qcNeedsRemediation(qcReport)) {
+    advanceAiProgress(pState, REMEDIATION_MAX_CYCLES * 2, "remediation not needed (stage 3/3)");
+    const n = (qcReport?.defects || []).length;
+    const overall = qcReport?.overall || "Clean";
+    logEl.textContent += `   QC ${overall} — remediation skipped`
+      + (n && overall !== "Clean" ? ` (${n} defect(s) below Critical/High)` : "")
+      + ".\n";
+    return { rawRows, qcReport, cycles: 0 };
+  }
+
+  while (qcNeedsRemediation(qcReport) && cycle < REMEDIATION_MAX_CYCLES) {
     cycle++;
     updateAiProgress(pState, `remediating (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
     logEl.textContent += `   remediation cycle ${cycle}/${REMEDIATION_MAX_CYCLES}: ${(qcReport.defects || []).length} defect(s) (${qcReport.overall}) — correcting on ${remediationLabel}…\n`;
@@ -5621,13 +5638,13 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
         {
           type: "text",
           text: [
-            "Correct the defects below using emit_row_patches — do NOT re-emit the full table.",
-            "For each cell defect: one patch with row_index, column, and new_value traced to the label.",
-            "For missing uses (row_index -1): put complete new rows in add_rows only.",
-            "For true duplicates: list indices in remove_row_indices.",
-            "Current row set (JSON, 0-based indices):",
+            "Correct ONLY the listed Critical/High defects with emit_row_patches — do not re-emit the full table.",
+            "Cell defect → one patch {row_index, column, new_value} traced to the label.",
+            "Missing use (row_index -1) → complete row(s) in add_rows only.",
+            "True duplicates → remove_row_indices.",
+            "Current rows (JSON):",
             JSON.stringify(rawRows),
-            "Defects to resolve:",
+            "Defects:",
             JSON.stringify(qcReport.defects || [])
           ].join("\n")
         }
@@ -5653,7 +5670,7 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
           {
             type: "text",
             text: [
-              "Re-run the full 5-pass QC review against the corrected rows below (JSON, 0-based indices):",
+              "Re-run 5-pass QC on the corrected rows (JSON, 0-based indices):",
               JSON.stringify(rawRows)
             ].join("\n")
           }
@@ -5676,14 +5693,12 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
     advanceAiProgress(
       pState,
       leftover,
-      aborted ? "remediation aborted (stage 3/3)" : (cycle > 0 ? "remediation complete (stage 3/3)" : "remediation not needed (stage 3/3)")
+      aborted ? "remediation aborted (stage 3/3)" : "remediation complete (stage 3/3)"
     );
   }
   logEl.textContent += aborted
     ? `   remediation stopped early — QC status remains: ${qcReport.overall}.\n`
-    : cycle > 0
-      ? `   remediation complete after ${cycle} cycle(s) — final QC status: ${qcReport.overall}.\n`
-      : `   QC review: ${qcReport.overall}${(qcReport.defects || []).length ? ` (${qcReport.defects.length} defect(s), below remediation threshold)` : " — clean"}.\n`;
+    : `   remediation complete after ${cycle} cycle(s) — final QC status: ${qcReport.overall}.\n`;
   return { rawRows, qcReport, cycles: cycle };
 }
 
@@ -5769,7 +5784,9 @@ async function extractWithLLM(doc, pState) {
   logEl.textContent += `   stage 2/3 — independent QC review (Opus, Sonnet fallback)…\n`;
   const qc = await runQcTurn(allRawRows, doc, qcLabelText, systemBlocks, tools, pState);
 
-  logEl.textContent += `   stage 3/3 — bounded remediation on Opus (up to ${REMEDIATION_MAX_CYCLES} cycle(s))…\n`;
+  logEl.textContent += qcNeedsRemediation(qc.qcReport)
+    ? `   stage 3/3 — bounded remediation on Opus (up to ${REMEDIATION_MAX_CYCLES} cycle(s))…\n`
+    : `   stage 3/3 — remediation skipped (QC ${qc.qcReport?.overall || "Clean"}; only Critical/High remediates)\n`;
   let remediated;
   try {
     remediated = await runRemediationLoop(qc, allRawRows, systemBlocks, tools, pState);
