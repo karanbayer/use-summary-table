@@ -4246,7 +4246,7 @@ const REMEDIATION_MAX_CYCLES = 1;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-09-23d";
+const PIPELINE_BUILD = "2026-09-23e";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -5158,7 +5158,13 @@ function buildPageWindowChunks(doc, frontMatter) {
  * Split a label into extraction chunks using findUseSections (crop/use spans).
  * Each chunk = shared front matter (product identity) + one or more whole
  * use sections packed under EXTRACT_CHUNK_CHARS. Sections are never split
- * mid-crop. Falls back to page windows if no sections are detected.
+ * mid-crop.
+ *
+ * Risk mitigations when findUseSections misses layout:
+ *  - 0 sections → page-window chunks
+ *  - low coverage of the directions body → page-window chunks instead
+ *  - gaps between / after detected sections → extra "gap" chunks so skipped
+ *    crops still get a model pass
  */
 function buildExtractionChunks(doc) {
   const pageMarkedFull = doc.pages
@@ -5169,7 +5175,8 @@ function buildExtractionChunks(doc) {
   }
 
   const pageSpans = buildPageSpans(doc);
-  const sections = findUseSections(doc.fullText || "");
+  const fullText = doc.fullText || "";
+  const sections = findUseSections(fullText);
   const frontMatter = buildFrontMatterMarked(doc, pageSpans, sections);
 
   if (!sections.length) {
@@ -5177,7 +5184,56 @@ function buildExtractionChunks(doc) {
     return buildPageWindowChunks(doc, frontMatter);
   }
 
-  logEl.textContent += `   chunking via findUseSections: ${sections.length} section(s) detected\n`;
+  // Coverage of the "directions body" (from first section to end, minus a
+  // small trailing allowance). If detectors only caught a thin slice of the
+  // label, prefer page windows over trusting sparse sections.
+  const bodyStart = sections[0].start;
+  const bodyLen = Math.max(1, fullText.length - bodyStart);
+  let covered = 0;
+  const sorted = sections.slice().sort((a, b) => a.start - b.start);
+  let cursor = bodyStart;
+  for (const sec of sorted) {
+    const from = Math.max(sec.start, bodyStart);
+    const to = Math.max(from, sec.end);
+    if (to > from) covered += to - from;
+    cursor = Math.max(cursor, to);
+  }
+  const coverage = covered / bodyLen;
+  const MIN_SECTION_COVERAGE = 0.45;
+  if (coverage < MIN_SECTION_COVERAGE) {
+    logEl.textContent += `   ⚠ use-section coverage ${Math.round(coverage * 100)}% `
+      + `(< ${Math.round(MIN_SECTION_COVERAGE * 100)}%) — falling back to page windows\n`;
+    return buildPageWindowChunks(doc, frontMatter);
+  }
+
+  logEl.textContent += `   chunking via findUseSections: ${sections.length} section(s), `
+    + `~${Math.round(coverage * 100)}% body coverage\n`;
+
+  // Build work units: detected sections + any sizable uncovered gaps so a
+  // missed crop between two detections still gets extracted.
+  const MIN_GAP_CHARS = 600;
+  const units = [];
+  let gapCursor = bodyStart;
+  for (const sec of sorted) {
+    if (sec.start - gapCursor >= MIN_GAP_CHARS) {
+      units.push({
+        kind: "gap",
+        start: gapCursor,
+        end: sec.start,
+        useName: `undetected gap (${gapCursor}–${sec.start})`
+      });
+    }
+    units.push({ kind: "section", start: sec.start, end: sec.end, useName: sec.useName || "section" });
+    gapCursor = Math.max(gapCursor, sec.end);
+  }
+  if (fullText.length - gapCursor >= MIN_GAP_CHARS) {
+    units.push({
+      kind: "gap",
+      start: gapCursor,
+      end: fullText.length,
+      useName: "trailing undetected pages"
+    });
+  }
 
   const chunks = [];
   let pack = [];
@@ -5186,40 +5242,32 @@ function buildExtractionChunks(doc) {
 
   const flushPack = () => {
     if (!pack.length) return;
-    const body = pack.map(s => sliceFullTextToMarked(pageSpans, s.start, s.end)).join("\n\n");
+    const body = pack.map(u => sliceFullTextToMarked(pageSpans, u.start, u.end)).join("\n\n");
     const names = packNames.join("; ");
     const id = packNames.length <= 2
       ? names
-      : `${packNames.length} sections (${packNames[0]}…)`;
-    chunks.push({ id, text: wrapChunkBody(frontMatter, `use sections: ${names}`, body) });
+      : `${packNames.length} units (${packNames[0]}…)`;
+    chunks.push({ id, text: wrapChunkBody(frontMatter, names, body) });
     pack = [];
     packNames = [];
     packLen = frontMatter.length;
   };
 
-  for (const sec of sections) {
-    const secMarked = sliceFullTextToMarked(pageSpans, sec.start, sec.end);
-    const secLen = secMarked.length;
-    const name = (sec.useName || "section").trim() || "section";
-    if (pack.length && packLen + secLen > EXTRACT_CHUNK_CHARS) flushPack();
-    pack.push(sec);
+  for (const unit of units) {
+    const unitMarked = sliceFullTextToMarked(pageSpans, unit.start, unit.end);
+    const unitLen = unitMarked.length;
+    const name = (unit.useName || unit.kind).trim() || unit.kind;
+    if (pack.length && packLen + unitLen > EXTRACT_CHUNK_CHARS) flushPack();
+    pack.push(unit);
     packNames.push(name);
-    packLen += secLen;
-    // Oversized single section: send alone rather than splitting mid-crop.
+    packLen += unitLen;
     if (pack.length === 1 && packLen > EXTRACT_CHUNK_CHARS) flushPack();
   }
   flushPack();
 
-  // Trailing text after the last section (sometimes holds extra use tables).
-  const lastEnd = sections[sections.length - 1].end;
-  if ((doc.fullText || "").length - lastEnd > 800) {
-    const gap = sliceFullTextToMarked(pageSpans, lastEnd, (doc.fullText || "").length);
-    if (gap.length > 400) {
-      chunks.push({
-        id: "trailing pages",
-        text: wrapChunkBody(frontMatter, "pages after last detected use section", gap)
-      });
-    }
+  const gapCount = units.filter(u => u.kind === "gap").length;
+  if (gapCount) {
+    logEl.textContent += `   · added ${gapCount} gap chunk unit(s) for text outside detected sections\n`;
   }
 
   return chunks.length ? chunks : [{ id: "full", text: pageMarkedFull }];
