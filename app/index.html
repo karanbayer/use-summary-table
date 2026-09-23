@@ -4246,7 +4246,7 @@ const REMEDIATION_MAX_CYCLES = 1;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-09-23c";
+const PIPELINE_BUILD = "2026-09-23d";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -4254,6 +4254,13 @@ const INTERACTIVE_WARN_PAGES = 40;
 // Full-table re-emit during remediation can drop the connection on large
 // labels; we still attempt Opus correction and keep extraction rows if it fails.
 const REMEDIATION_ROW_SKIP_THRESHOLD = Infinity;
+
+// Chunked extraction — keep each Gateway call under this character budget.
+// Front-matter (product identity pages) is prepended to every body chunk.
+const EXTRACT_CHUNK_CHARS = 55000;
+const EXTRACT_FRONT_MATTER_MAX_PAGES = 8;
+// One automatic retry per file before marking it failed (multi-label batches).
+const FILE_EXTRACT_MAX_ATTEMPTS = 2;
 
 // Progress-bar step budget per document, sized to the worst-case call count:
 // 1 (extraction) + 1 (QC) + up to 2 calls per remediation cycle (correction,
@@ -5009,10 +5016,11 @@ chatClearBtn.addEventListener("click", () => {
   renderChatMessages();
 });
 
-// Stage 1 — extraction agent: read the label, emit the initial row set.
-async function runExtractionTurn(doc, pageMarkedText, systemBlocks, tools, pState) {
+// Stage 1 — extraction agent: read the label (or one chunk), emit rows.
+async function runExtractionTurn(doc, pageMarkedText, systemBlocks, tools, pState, stageNote) {
   updateAiProgress(pState, "extraction (stage 1/3)");
-  const stageText = "Read the entire label above and emit one row per use + use site + application method, per the rules and schema in the system prompt.";
+  const stageText = stageNote
+    || "Read the entire label above and emit one row per use + use site + application method, per the rules and schema in the system prompt.";
   const messages = [
     { role: "user", content: buildDocMessageBlocks(doc, pageMarkedText, stageText) }
   ];
@@ -5022,8 +5030,199 @@ async function runExtractionTurn(doc, pageMarkedText, systemBlocks, tools, pStat
   if (rawRows.length === 0) {
     logEl.textContent += `   ⚠ model returned 0 rows (stop_reason=${data.stop_reason || "?"}, output_tokens=${data.usage?.output_tokens ?? "?"})\n`;
   }
-  advanceAiProgress(pState, 1, "extraction complete (stage 1/3)");
-  return { messages, rawRows, lastToolUseId: toolUse.id };
+  return { messages, rawRows, lastToolUseId: toolUse.id, data };
+}
+
+/** True when the model returned a shell of rows with almost no real values (typical truncation / failed extract). */
+function isMostlyEmptyNsRows(rawRows) {
+  if (!Array.isArray(rawRows) || rawRows.length === 0) return true;
+  let filled = 0;
+  let total = 0;
+  for (const r of rawRows) {
+    for (const col of SCHEMA) {
+      total++;
+      const v = String(r?.[col] ?? "").trim();
+      if (v && v !== NOT_SPECIFIED && v !== NOT_APPLICABLE) filled++;
+    }
+  }
+  return total > 0 && (filled / total) < 0.05;
+}
+
+function findDirectionsStartPageIndex(doc) {
+  for (let i = 0; i < doc.pages.length; i++) {
+    if (/DIRECTIONS\s+FOR\s+USE|SPECIFIC\s+CROP\s+DIRECTIONS|SPECIFIC\s+USE\s+DIRECTIONS/i.test(doc.pages[i] || "")) {
+      return i;
+    }
+  }
+  return 0;
+}
+
+/**
+ * Map char offsets in doc.fullText (pages joined by "\\n\\n") onto --- PAGE N --- slices.
+ */
+function buildPageSpans(doc) {
+  const spans = [];
+  let off = 0;
+  for (let i = 0; i < doc.pages.length; i++) {
+    const text = doc.pages[i] || "";
+    spans.push({ page: i + 1, start: off, end: off + text.length, text });
+    off += text.length + (i < doc.pages.length - 1 ? 2 : 0);
+  }
+  return spans;
+}
+
+function sliceFullTextToMarked(pageSpans, charStart, charEnd) {
+  const parts = [];
+  for (const ps of pageSpans) {
+    if (ps.end <= charStart || ps.start >= charEnd) continue;
+    const localStart = Math.max(0, charStart - ps.start);
+    const localEnd = Math.min(ps.text.length, charEnd - ps.start);
+    const slice = ps.text.slice(localStart, localEnd);
+    if (slice.trim()) parts.push(`--- PAGE ${ps.page} ---\n${slice}`);
+  }
+  return parts.join("\n\n");
+}
+
+function buildFrontMatterMarked(doc, pageSpans, sections) {
+  const dirPage = findDirectionsStartPageIndex(doc);
+  const frontPageCount = Math.min(
+    pageSpans.length,
+    Math.max(EXTRACT_FRONT_MATTER_MAX_PAGES, dirPage + 1)
+  );
+  let byPages = pageSpans.slice(0, frontPageCount).map(p => `--- PAGE ${p.page} ---\n${p.text}`).join("\n\n");
+
+  // Prefer cutting at the first detected use section when that is earlier.
+  if (sections.length && sections[0].start > 0) {
+    const bySections = sliceFullTextToMarked(pageSpans, 0, sections[0].start);
+    if (bySections.trim() && bySections.length <= byPages.length) byPages = bySections;
+  }
+
+  // Keep front matter from dominating the chunk budget.
+  if (byPages.length > Math.floor(EXTRACT_CHUNK_CHARS * 0.4)) {
+    byPages = pageSpans
+      .slice(0, EXTRACT_FRONT_MATTER_MAX_PAGES)
+      .map(p => `--- PAGE ${p.page} ---\n${p.text}`)
+      .join("\n\n");
+  }
+  return byPages;
+}
+
+function wrapChunkBody(frontMatter, bodyLabel, bodyText) {
+  return [
+    frontMatter,
+    "",
+    `--- CHUNK BODY (${bodyLabel}) ---`,
+    "Extract every use + use site + application method from the CHUNK BODY.",
+    "Use the front-matter pages only for product identity (Reg. #, PBN, Physical Form, PPE, REI, etc.).",
+    "Do not invent uses that are not supported by the CHUNK BODY.",
+    "",
+    bodyText
+  ].join("\n");
+}
+
+/** Fallback when findUseSections finds nothing — pack by page windows. */
+function buildPageWindowChunks(doc, frontMatter) {
+  const markedPages = doc.pages.map((text, i) => ({
+    page: i + 1,
+    block: `--- PAGE ${i + 1} ---\n${text}`
+  }));
+  const frontEnd = Math.min(
+    markedPages.length,
+    Math.max(EXTRACT_FRONT_MATTER_MAX_PAGES, findDirectionsStartPageIndex(doc) + 1)
+  );
+  const bodyPages = markedPages.slice(frontEnd);
+  if (!bodyPages.length) {
+    return [{ id: "full", text: markedPages.map(p => p.block).join("\n\n") }];
+  }
+  const chunks = [];
+  let buf = [];
+  let bufLen = frontMatter.length;
+  const flush = () => {
+    if (!buf.length) return;
+    const body = buf.map(p => p.block).join("\n\n");
+    const label = `pages ${buf[0].page}–${buf[buf.length - 1].page}`;
+    chunks.push({ id: label, text: wrapChunkBody(frontMatter, label, body) });
+    buf = [];
+    bufLen = frontMatter.length;
+  };
+  for (const p of bodyPages) {
+    if (buf.length && bufLen + p.block.length > EXTRACT_CHUNK_CHARS) flush();
+    buf.push(p);
+    bufLen += p.block.length;
+  }
+  flush();
+  return chunks;
+}
+
+/**
+ * Split a label into extraction chunks using findUseSections (crop/use spans).
+ * Each chunk = shared front matter (product identity) + one or more whole
+ * use sections packed under EXTRACT_CHUNK_CHARS. Sections are never split
+ * mid-crop. Falls back to page windows if no sections are detected.
+ */
+function buildExtractionChunks(doc) {
+  const pageMarkedFull = doc.pages
+    .map((text, i) => `--- PAGE ${i + 1} ---\n${text}`)
+    .join("\n\n");
+  if (pageMarkedFull.length <= EXTRACT_CHUNK_CHARS) {
+    return [{ id: "full", text: pageMarkedFull }];
+  }
+
+  const pageSpans = buildPageSpans(doc);
+  const sections = findUseSections(doc.fullText || "");
+  const frontMatter = buildFrontMatterMarked(doc, pageSpans, sections);
+
+  if (!sections.length) {
+    logEl.textContent += `   ⚠ no use sections detected for chunking — falling back to page windows\n`;
+    return buildPageWindowChunks(doc, frontMatter);
+  }
+
+  logEl.textContent += `   chunking via findUseSections: ${sections.length} section(s) detected\n`;
+
+  const chunks = [];
+  let pack = [];
+  let packNames = [];
+  let packLen = frontMatter.length;
+
+  const flushPack = () => {
+    if (!pack.length) return;
+    const body = pack.map(s => sliceFullTextToMarked(pageSpans, s.start, s.end)).join("\n\n");
+    const names = packNames.join("; ");
+    const id = packNames.length <= 2
+      ? names
+      : `${packNames.length} sections (${packNames[0]}…)`;
+    chunks.push({ id, text: wrapChunkBody(frontMatter, `use sections: ${names}`, body) });
+    pack = [];
+    packNames = [];
+    packLen = frontMatter.length;
+  };
+
+  for (const sec of sections) {
+    const secMarked = sliceFullTextToMarked(pageSpans, sec.start, sec.end);
+    const secLen = secMarked.length;
+    const name = (sec.useName || "section").trim() || "section";
+    if (pack.length && packLen + secLen > EXTRACT_CHUNK_CHARS) flushPack();
+    pack.push(sec);
+    packNames.push(name);
+    packLen += secLen;
+    // Oversized single section: send alone rather than splitting mid-crop.
+    if (pack.length === 1 && packLen > EXTRACT_CHUNK_CHARS) flushPack();
+  }
+  flushPack();
+
+  // Trailing text after the last section (sometimes holds extra use tables).
+  const lastEnd = sections[sections.length - 1].end;
+  if ((doc.fullText || "").length - lastEnd > 800) {
+    const gap = sliceFullTextToMarked(pageSpans, lastEnd, (doc.fullText || "").length);
+    if (gap.length > 400) {
+      chunks.push({
+        id: "trailing pages",
+        text: wrapChunkBody(frontMatter, "pages after last detected use section", gap)
+      });
+    }
+  }
+
+  return chunks.length ? chunks : [{ id: "full", text: pageMarkedFull }];
 }
 
 // Stage 2 — QC agent: a fresh conversation, independent of the extractor's
@@ -5206,39 +5405,64 @@ async function extractWithLLM(doc, pState) {
     .map((text, i) => `--- PAGE ${i + 1} ---\n${text}`)
     .join("\n\n");
 
-  const MAX_CHARS = 150000;
-  if (pageMarkedText.length > MAX_CHARS) {
-    logEl.textContent += `   ⚠ ${doc.fileName} is ${pageMarkedText.length.toLocaleString()} characters — `
-      + `above the ~${MAX_CHARS.toLocaleString()}-character single-call guideline; sending the full text anyway (no chunking in v1).\n`;
-  }
-
   const systemBlocks = buildSystemBlocks();
   const tools = buildTools();
   logEl.textContent += `   pipeline ${PIPELINE_BUILD}\n`;
 
-  logEl.textContent += `   stage 1/3 — extraction…\n`;
-  const extraction = await runExtractionTurn(doc, pageMarkedText, systemBlocks, tools, pState);
-  logEl.textContent += `   ${extraction.rawRows.length} row(s) from initial extraction\n`;
+  const chunks = buildExtractionChunks(doc);
+  logEl.textContent += `   stage 1/3 — extraction (${chunks.length} chunk(s))…\n`;
+
+  const allRawRows = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    updateAiProgress(pState, `extraction chunk ${i + 1}/${chunks.length}`);
+    logEl.textContent += `   · ${chunk.id}…\n`;
+    const stageNote = chunks.length === 1
+      ? "Read the entire label above and emit one row per use + use site + application method, per the rules and schema in the system prompt."
+      : `This is extraction chunk ${i + 1} of ${chunks.length} ("${chunk.id}"). `
+        + "Emit one row per use + use site + application method found in the CHUNK BODY only. "
+        + "Front-matter is for product identity fields. Do not omit uses that appear in this chunk.";
+    const turn = await runExtractionTurn(doc, chunk.text, systemBlocks, tools, pState, stageNote);
+    if (isMostlyEmptyNsRows(turn.rawRows)) {
+      throw new Error(
+        `Chunk "${chunk.id}" returned empty or NS-only rows (likely truncation or gateway failure)`
+      );
+    }
+    logEl.textContent += `     → ${turn.rawRows.length} row(s)\n`;
+    allRawRows.push(...turn.rawRows);
+  }
+  advanceAiProgress(pState, 1, "extraction complete (stage 1/3)");
+  logEl.textContent += `   ${allRawRows.length} row(s) from initial extraction (all chunks)\n`;
+
+  // QC still sees as much label text as fits; output is small so truncation risk is lower.
+  const QC_MAX_CHARS = 150000;
+  let qcLabelText = pageMarkedText;
+  if (qcLabelText.length > QC_MAX_CHARS) {
+    qcLabelText = qcLabelText.slice(0, QC_MAX_CHARS)
+      + `\n\n[Label truncated for QC context at ${QC_MAX_CHARS.toLocaleString()} characters]`;
+    logEl.textContent += `   ⚠ QC context truncated to ${QC_MAX_CHARS.toLocaleString()} characters\n`;
+  }
 
   logEl.textContent += `   stage 2/3 — independent QC review (Opus, Sonnet fallback)…\n`;
-  const qc = await runQcTurn(extraction.rawRows, doc, pageMarkedText, systemBlocks, tools, pState);
+  const qc = await runQcTurn(allRawRows, doc, qcLabelText, systemBlocks, tools, pState);
 
   logEl.textContent += `   stage 3/3 — bounded remediation on Opus (up to ${REMEDIATION_MAX_CYCLES} cycle(s))…\n`;
   let remediated;
   try {
-    remediated = await runRemediationLoop(qc, extraction.rawRows, systemBlocks, tools, pState);
+    remediated = await runRemediationLoop(qc, allRawRows, systemBlocks, tools, pState);
   } catch (err) {
-    logEl.textContent += `   ⚠ remediation failed — ${err.message}. Keeping ${extraction.rawRows.length} row(s) from extraction.\n`;
+    logEl.textContent += `   ⚠ remediation failed — ${err.message}. Keeping ${allRawRows.length} row(s) from extraction.\n`;
     advanceAiProgress(pState, REMEDIATION_MAX_CYCLES * 2, "remediation failed (stage 3/3)");
-    remediated = { rawRows: extraction.rawRows, qcReport: qc.qcReport, cycles: 0 };
+    remediated = { rawRows: allRawRows, qcReport: qc.qcReport, cycles: 0 };
   }
 
-  // Snap to exactly this file's share of the overall bar, regardless of any
-  // drift from the step-budget approximations above.
   pState.step = pState.maxSteps;
   updateAiProgress(pState, "file complete");
 
   const rows = buildAppRows(remediated.rawRows, doc);
+  if (!rows.length || isMostlyEmptyNsRows(remediated.rawRows)) {
+    throw new Error("Final row set is empty or NS-only — not treating as a successful extract");
+  }
   return { rows, qcReport: remediated.qcReport, remediationCycles: remediated.cycles };
 }
 
@@ -5328,26 +5552,42 @@ async function finishRun(documents, totalPages, selectedAi) {
         const pState = pool[docIndex];
         updateAiProgress(pState, "starting");
         logEl.textContent += `\n→ ${doc.fileName}: extracting with AI — extraction agent runs first, then an independent QC agent (reads the full label and applies extraction-rules.md / derivation-rules.md)…\n`;
-        try {
-          const result = await extractWithLLM(doc, pState);
+        let lastErr = null;
+        let result = null;
+        for (let attempt = 1; attempt <= FILE_EXTRACT_MAX_ATTEMPTS; attempt++) {
+          try {
+            if (attempt > 1) {
+              logEl.textContent += `   ↻ retrying ${doc.fileName} (attempt ${attempt}/${FILE_EXTRACT_MAX_ATTEMPTS})…\n`;
+              pState.step = 0;
+            }
+            result = await extractWithLLM(doc, pState);
+            lastErr = null;
+            break;
+          } catch (err) {
+            lastErr = err;
+            console.error(err);
+            logEl.textContent += `   ⚠ ${doc.fileName} attempt ${attempt}/${FILE_EXTRACT_MAX_ATTEMPTS} failed — ${err.message}\n`;
+          }
+        }
+        if (result) {
           logEl.textContent += `   ${doc.fileName}: ${result.rows.length} use row(s) returned after the full pipeline\n`;
-          results[docIndex] = { rows: result.rows, qcReport: result.qcReport, remediationCycles: result.remediationCycles };
-        } catch (err) {
-          // Never silently fall back to regex — the user must know which path
-          // actually produced (or failed to produce) the rows on screen.
-          console.error(err);
-          logEl.textContent += `✖ ${doc.fileName}: AI extraction failed — ${err.message}\n`;
+          results[docIndex] = {
+            rows: result.rows,
+            qcReport: result.qcReport,
+            remediationCycles: result.remediationCycles,
+            failed: false
+          };
+        } else {
+          // Fail loud — do not invent an all-NS placeholder row for this file.
           pState.step = pState.maxSteps;
           updateAiProgress(pState, "AI extraction failed");
-          const fallback = blankRow();
-          fallback["Additional Information"] = `AI extraction failed: ${err.message}`;
-          fallback["Page"] = "1";
-          fallback["Confidence"] = "Low";
-          fallback["Source File"] = doc.fileName;
-          fallback.__source = "";
-          fallback.__derived = {};
-          fallback.__id = `${doc.fileName}#0`;
-          results[docIndex] = { rows: [fallback], qcReport: null };
+          logEl.textContent += `✖ ${doc.fileName}: AI extraction failed after ${FILE_EXTRACT_MAX_ATTEMPTS} attempt(s) — ${lastErr?.message || "unknown error"}. No rows added for this file.\n`;
+          results[docIndex] = {
+            rows: [],
+            qcReport: null,
+            failed: true,
+            error: lastErr?.message || "AI extraction failed"
+          };
         }
       }
     }
@@ -5373,9 +5613,14 @@ async function finishRun(documents, totalPages, selectedAi) {
     }
   }
 
+  const failedFiles = [];
   for (let docIndex = 0; docIndex < documents.length; docIndex++) {
     const doc = documents[docIndex];
-    const { rows, qcReport, remediationCycles } = results[docIndex];
+    const { rows, qcReport, remediationCycles, failed, error } = results[docIndex];
+    if (failed) {
+      failedFiles.push({ fileName: doc.fileName, error: error || "AI extraction failed" });
+      continue;
+    }
     if (qcReport) {
       aiQcReports.push({ fileName: doc.fileName, qcReport });
       reportQcSummary(doc.fileName, qcReport.overall, remediationCycles);
@@ -5400,6 +5645,15 @@ async function finishRun(documents, totalPages, selectedAi) {
       }
     });
     console.table(rows);
+  }
+
+  if (failedFiles.length) {
+    const detail = failedFiles.map(f => `${f.fileName} (${f.error})`).join("; ");
+    logEl.textContent += `\n✖ ${failedFiles.length} file(s) failed AI extraction (no placeholder NS rows): ${detail}\n`;
+    showNotice(
+      `${failedFiles.length} file(s) failed AI extraction and were omitted from the table: ${failedFiles.map(f => f.fileName).join(", ")}. Successful files are shown below — re-run the failed file(s) alone.`,
+      "error"
+    );
   }
 
   window.__useSummaryRows = allRows;
@@ -5431,16 +5685,25 @@ async function finishRun(documents, totalPages, selectedAi) {
   statusEl.textContent = qcReport.passed
     ? `Done — ${documents.length} document(s), ${totalPages} page(s), ${allRows.length} row(s).`
     : `Done — ${documents.length} document(s), ${totalPages} page(s), ${allRows.length} row(s). QC defects found — review before using.`;
-  noticeTx.textContent = !qcReport.passed
-    ? `Extraction complete with ${qcReport.defects.length} QC defect(s). Review the flagged issues before using results.`
-    : bad.length === 0
-    ? `Extraction complete. ${allRows.length} use row(s) across ${crops} use(s) from ${documents.length} document(s) (${totalPages} pages). ` +
-      `Output is schema-verified: all ${SCHEMA.length} columns present in every row, no blanks. ` +
-      `${lowRows} row(s) flagged low confidence${warnCount ? ` and ${warnCount} use(s) flagged for coverage` : ""} — review those before relying on the table. ` +
-      `${derivedCount} cell(s) marked ◆ were filled by a convention rule rather than read verbatim — hover any of them to see which rule.`
-    : `Extraction complete with ${bad.length} row(s) failing schema verification — see console for details.`;
-  noticeIc.textContent = qcReport.passed ? "✔" : "⚠";
-  noticeEl.classList.toggle("error", !qcReport.passed);
+  if (failedFiles.length) {
+    noticeTx.textContent = allRows.length
+      ? `${failedFiles.length} file(s) failed AI extraction and were omitted. Showing ${allRows.length} row(s) from successful file(s): ${failedFiles.map(f => f.fileName).join(", ")} failed.`
+      : `All ${failedFiles.length} file(s) failed AI extraction — no rows to show. Re-run failed file(s) alone. Failed: ${failedFiles.map(f => f.fileName).join(", ")}.`;
+    noticeIc.textContent = "✖";
+    noticeEl.classList.add("error");
+    noticeEl.classList.remove("warn");
+  } else {
+    noticeTx.textContent = !qcReport.passed
+      ? `Extraction complete with ${qcReport.defects.length} QC defect(s). Review the flagged issues before using results.`
+      : bad.length === 0
+      ? `Extraction complete. ${allRows.length} use row(s) across ${crops} use(s) from ${documents.length} document(s) (${totalPages} pages). ` +
+        `Output is schema-verified: all ${SCHEMA.length} columns present in every row, no blanks. ` +
+        `${lowRows} row(s) flagged low confidence${warnCount ? ` and ${warnCount} use(s) flagged for coverage` : ""} — review those before relying on the table. ` +
+        `${derivedCount} cell(s) marked ◆ were filled by a convention rule rather than read verbatim — hover any of them to see which rule.`
+      : `Extraction complete with ${bad.length} row(s) failing schema verification — see console for details.`;
+    noticeIc.textContent = qcReport.passed ? "✔" : "⚠";
+    noticeEl.classList.toggle("error", !qcReport.passed);
+  }
   if (bad.length) console.warn("[Extractor] non-compliant rows", bad);
   noticeEl.style.display = "flex";
   // Review stations disabled for the time being (startReviewFlow left intact
@@ -5808,6 +6071,7 @@ if (jobIdParam) {
     if (!res.ok) return;
     const features = await res.json();
     if (features.backgroundJobs === false) {
+      backgroundJobsAvailable = false;
       runBgBtn.style.display = "none";
       jobHistoryBtn.style.display = "none";
       lastJobBannerEl.style.display = "none";
