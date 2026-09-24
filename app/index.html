@@ -4369,7 +4369,7 @@ const REMEDIATION_MAX_CYCLES = 1;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-09-24a";
+const PIPELINE_BUILD = "2026-09-24b";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -4380,14 +4380,23 @@ const REMEDIATION_ROW_SKIP_THRESHOLD = Infinity;
 
 // Chunked extraction — keep each Gateway call under this character budget.
 // Front-matter (product identity pages) is prepended to every body chunk.
-// Raised from 55k so multi-crop labels pack into fewer chunks (fewer round-trips).
+// Default 85k packs small/medium labels into one chunk (fast single-pass).
+// Large labels (many sections/pages) use EXTRACT_CHUNK_CHARS_LARGE so they
+// split and run two-pass — SIVANTO-class single-pass was ~5 min and QC High.
 const EXTRACT_CHUNK_CHARS = 85000;
+const EXTRACT_CHUNK_CHARS_LARGE = 55000;
 const EXTRACT_FRONT_MATTER_MAX_PAGES = 8;
 /** Skip gap units when section detectors already cover most of the body. */
 const SKIP_GAP_UNITS_COVERAGE = 0.80;
 /**
- * Adaptive extract: one chunk → single-pass (old fast path); multiple chunks
- * → two-pass skeleton/detail (truncation-safe for large labels).
+ * Force multi-chunk / two-pass when the label is this large — even if the
+ * full text would fit under EXTRACT_CHUNK_CHARS.
+ */
+const FORCE_TWO_PASS_MIN_SECTIONS = 15;
+const FORCE_TWO_PASS_MIN_PAGES = 20;
+/**
+ * Adaptive extract: small one-chunk labels → single-pass; large or multi-chunk
+ * → two-pass skeleton/detail.
  */
 const USE_TWO_PASS_WHEN_CHUNKS_GT = 1;
 // One automatic retry per file before marking it failed (multi-label batches).
@@ -5458,8 +5467,52 @@ function wrapChunkBody(frontMatter, bodyLabel, bodyText) {
   ].join("\n");
 }
 
+/** True when a label is large enough that single-pass over the whole PDF is a bad idea. */
+function isLargeLabelForExtract(doc, sectionCount) {
+  const pages = doc.numPages || (doc.pages && doc.pages.length) || 0;
+  const sections = typeof sectionCount === "number"
+    ? sectionCount
+    : findUseSections(doc.fullText || "").length;
+  return pages >= FORCE_TWO_PASS_MIN_PAGES || sections >= FORCE_TWO_PASS_MIN_SECTIONS;
+}
+
+function chunkCharBudgetForDoc(doc, sectionCount) {
+  return isLargeLabelForExtract(doc, sectionCount)
+    ? EXTRACT_CHUNK_CHARS_LARGE
+    : EXTRACT_CHUNK_CHARS;
+}
+
+/**
+ * Decide single-pass vs two-pass after chunks are built.
+ * Large labels always two-pass — even when packed into one chunk.
+ */
+function chooseExtractMode(doc, chunks) {
+  const pages = doc.numPages || (doc.pages && doc.pages.length) || 0;
+  const sections = findUseSections(doc.fullText || "").length;
+  if (chunks.length > USE_TWO_PASS_WHEN_CHUNKS_GT) {
+    return {
+      useTwoPass: true,
+      reason: `${chunks.length} chunk(s)`
+    };
+  }
+  if (pages >= FORCE_TWO_PASS_MIN_PAGES) {
+    return {
+      useTwoPass: true,
+      reason: `${pages} pages (≥ ${FORCE_TWO_PASS_MIN_PAGES})`
+    };
+  }
+  if (sections >= FORCE_TWO_PASS_MIN_SECTIONS) {
+    return {
+      useTwoPass: true,
+      reason: `${sections} sections (≥ ${FORCE_TWO_PASS_MIN_SECTIONS})`
+    };
+  }
+  return { useTwoPass: false, reason: "small label (1 chunk)" };
+}
+
 /** Fallback when findUseSections finds nothing — pack by page windows. */
-function buildPageWindowChunks(doc, frontMatter) {
+function buildPageWindowChunks(doc, frontMatter, chunkBudget) {
+  const budget = chunkBudget || EXTRACT_CHUNK_CHARS;
   const markedPages = doc.pages.map((text, i) => ({
     page: i + 1,
     block: `--- PAGE ${i + 1} ---\n${text}`
@@ -5484,7 +5537,7 @@ function buildPageWindowChunks(doc, frontMatter) {
     bufLen = frontMatter.length;
   };
   for (const p of bodyPages) {
-    if (buf.length && bufLen + p.block.length > EXTRACT_CHUNK_CHARS) flush();
+    if (buf.length && bufLen + p.block.length > budget) flush();
     buf.push(p);
     bufLen += p.block.length;
   }
@@ -5495,31 +5548,41 @@ function buildPageWindowChunks(doc, frontMatter) {
 /**
  * Split a label into extraction chunks using findUseSections (crop/use spans).
  * Each chunk = shared front matter (product identity) + one or more whole
- * use sections packed under EXTRACT_CHUNK_CHARS. Sections are never split
- * mid-crop.
+ * use sections packed under the char budget. Sections are never split mid-crop.
+ *
+ * Large labels (many pages/sections) use a tighter budget so they multi-chunk
+ * instead of one huge single-pass call.
  *
  * Risk mitigations when findUseSections misses layout:
  *  - 0 sections → page-window chunks
  *  - low coverage of the directions body → page-window chunks instead
- *  - gaps between / after detected sections → extra "gap" chunks so skipped
- *    crops still get a model pass
+ *  - gaps between / after detected sections → extra "gap" chunks when coverage is weak
  */
 function buildExtractionChunks(doc) {
   const pageMarkedFull = doc.pages
     .map((text, i) => `--- PAGE ${i + 1} ---\n${text}`)
     .join("\n\n");
-  if (pageMarkedFull.length <= EXTRACT_CHUNK_CHARS) {
+  const fullText = doc.fullText || "";
+  const sections = findUseSections(fullText);
+  const large = isLargeLabelForExtract(doc, sections.length);
+  const budget = chunkCharBudgetForDoc(doc, sections.length);
+
+  // Small labels that fit in one budget → single full chunk (fast path).
+  // Large labels never take this shortcut — they must pack/split.
+  if (!large && pageMarkedFull.length <= budget) {
     return [{ id: "full", text: pageMarkedFull }];
+  }
+  if (large) {
+    logEl.textContent += `   large label → chunk budget ${budget.toLocaleString()} chars `
+      + `(sections ${sections.length}, pages ${doc.numPages || doc.pages.length})\n`;
   }
 
   const pageSpans = buildPageSpans(doc);
-  const fullText = doc.fullText || "";
-  const sections = findUseSections(fullText);
   const frontMatter = buildFrontMatterMarked(doc, pageSpans, sections);
 
   if (!sections.length) {
     logEl.textContent += `   ⚠ no use sections detected for chunking — falling back to page windows\n`;
-    return buildPageWindowChunks(doc, frontMatter);
+    return buildPageWindowChunks(doc, frontMatter, budget);
   }
 
   // Coverage of the "directions body" (from first section to end, minus a
@@ -5529,19 +5592,17 @@ function buildExtractionChunks(doc) {
   const bodyLen = Math.max(1, fullText.length - bodyStart);
   let covered = 0;
   const sorted = sections.slice().sort((a, b) => a.start - b.start);
-  let cursor = bodyStart;
   for (const sec of sorted) {
     const from = Math.max(sec.start, bodyStart);
     const to = Math.max(from, sec.end);
     if (to > from) covered += to - from;
-    cursor = Math.max(cursor, to);
   }
   const coverage = covered / bodyLen;
   const MIN_SECTION_COVERAGE = 0.45;
   if (coverage < MIN_SECTION_COVERAGE) {
     logEl.textContent += `   ⚠ use-section coverage ${Math.round(coverage * 100)}% `
       + `(< ${Math.round(MIN_SECTION_COVERAGE * 100)}%) — falling back to page windows\n`;
-    return buildPageWindowChunks(doc, frontMatter);
+    return buildPageWindowChunks(doc, frontMatter, budget);
   }
 
   logEl.textContent += `   chunking via findUseSections: ${sections.length} section(s), `
@@ -5601,11 +5662,11 @@ function buildExtractionChunks(doc) {
     const unitMarked = sliceFullTextToMarked(pageSpans, unit.start, unit.end);
     const unitLen = unitMarked.length;
     const name = (unit.useName || unit.kind).trim() || unit.kind;
-    if (pack.length && packLen + unitLen > EXTRACT_CHUNK_CHARS) flushPack();
+    if (pack.length && packLen + unitLen > budget) flushPack();
     pack.push(unit);
     packNames.push(name);
     packLen += unitLen;
-    if (pack.length === 1 && packLen > EXTRACT_CHUNK_CHARS) flushPack();
+    if (pack.length === 1 && packLen > budget) flushPack();
   }
   flushPack();
 
@@ -5796,12 +5857,13 @@ async function extractWithLLM(doc, pState) {
   logEl.textContent += `   pipeline ${PIPELINE_BUILD}\n`;
 
   const chunks = buildExtractionChunks(doc);
-  const useTwoPass = chunks.length > USE_TWO_PASS_WHEN_CHUNKS_GT;
+  const mode = chooseExtractMode(doc, chunks);
+  const useTwoPass = mode.useTwoPass;
   const allRawRows = [];
 
   if (!useTwoPass) {
-    // Adaptive fast path — one chunk fits; single emit_use_summary_rows call.
-    logEl.textContent += `   stage 1/3 — single-pass extraction (adaptive; 1 chunk)…\n`;
+    // Adaptive fast path — small one-chunk labels only.
+    logEl.textContent += `   stage 1/3 — single-pass extraction (adaptive; ${mode.reason})…\n`;
     updateAiProgress(pState, "extraction (single-pass)");
     const turn = await runExtractionTurn(
       doc,
@@ -5818,7 +5880,7 @@ async function extractWithLLM(doc, pState) {
     logEl.textContent += `   ${allRawRows.length} row(s) from single-pass extraction\n`;
     timer.mark("extract(1ch/single)");
   } else {
-    logEl.textContent += `   stage 1/3 — two-pass extraction (${chunks.length} chunk(s))…\n`;
+    logEl.textContent += `   stage 1/3 — two-pass extraction (${chunks.length} chunk(s); ${mode.reason})…\n`;
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
       updateAiProgress(pState, `extraction chunk ${i + 1}/${chunks.length}`);
