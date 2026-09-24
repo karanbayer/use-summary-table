@@ -4369,7 +4369,7 @@ const REMEDIATION_MAX_CYCLES = 1;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-09-24b";
+const PIPELINE_BUILD = "2026-09-24c";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -4381,10 +4381,12 @@ const REMEDIATION_ROW_SKIP_THRESHOLD = Infinity;
 // Chunked extraction — keep each Gateway call under this character budget.
 // Front-matter (product identity pages) is prepended to every body chunk.
 // Default 85k packs small/medium labels into one chunk (fast single-pass).
-// Large labels (many sections/pages) use EXTRACT_CHUNK_CHARS_LARGE so they
-// split and run two-pass — SIVANTO-class single-pass was ~5 min and QC High.
+// Large labels (≥15 sections / ≥20 pages) use the same budget so they often
+// stay one chunk, but chooseExtractMode still forces two-pass (quality).
+// A tighter 55k large budget made SIVANTO 2× two-pass (~403s extract) — slower
+// than useful; we measure 1ch/2pass next.
 const EXTRACT_CHUNK_CHARS = 85000;
-const EXTRACT_CHUNK_CHARS_LARGE = 55000;
+const EXTRACT_CHUNK_CHARS_LARGE = 85000;
 const EXTRACT_FRONT_MATTER_MAX_PAGES = 8;
 /** Skip gap units when section detectors already cover most of the body. */
 const SKIP_GAP_UNITS_COVERAGE = 0.80;
