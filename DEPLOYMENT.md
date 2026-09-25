@@ -14,8 +14,11 @@ This app has two deploy targets:
 - **One Node process** on **`$PORT` (default 8080)** — required by Knative/Agentrix
   - Static UI from `/app/public` (`app/` in the repo)
   - `/api/extract` and `/api/qc-summary` (Entra → Bayer AI Gateway)
+  - `/api/jobs*` — **soft-async** background extraction (in-process queue + memory store)
   - `/health`, `/api/features`, and a stub `/mcp` that points browsers to `/`
-- **Not in Phase 1:** background jobs (`/api/jobs*`, queue worker). The UI hides those controls when `GET /api/features` reports `backgroundJobs: false`.
+- **Soft async requires `minScale: 1`** on the Knative/Agentrix service so the pod is not
+  scaled to zero while jobs run. Jobs live in memory: a pod restart or redeploy drops
+  queued and in-flight work. This is not SQS/Redis; swap later when the platform offers it.
 
 > Do not run a separate nginx on 8080: Knative injects `PORT=8080`, and two listeners
 > collide so `GET /` returns the API 404 JSON instead of the UI.
@@ -49,8 +52,12 @@ The container must reach `login.microsoftonline.com` and the AI Gateway host fro
 
 1. Ensure `Dockerfile`, `server/`, `docker/`, and `app/` are on the branch Agentrix clones.
 2. Configure the secrets above in Agentrix.
-3. Redeploy. Health check: `GET /health` → `{"ok":true,"runtime":"agentrix"}`.
-4. Open the app URL → check **Extract with AI** → **Run Extraction**.
+3. Redeploy. Set **`minScale: 1`** (or equivalent “always keep one replica”) so soft-async
+   jobs are not killed by scale-to-zero.
+4. Health check: `GET /health` → `{"ok":true,"runtime":"agentrix"}`.
+5. `GET /api/features` → `backgroundJobs: true`, `backgroundJobsMode: "soft-async"`.
+6. Open the app URL → **Run in background** should be visible → upload → confirm you can
+   close the tab and reopen `?job=<id>` for progress.
 
 ### Local smoke test (optional)
 

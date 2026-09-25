@@ -846,7 +846,8 @@ const batchWizardEl = document.getElementById("batchWizard");
 const batchListEl = document.getElementById("batchList");
 const batchWizardSubEl = document.getElementById("batchWizardSub");
 const batchRetryFailedBtn = document.getElementById("batchRetryFailedBtn");
-// Set false when GET /api/features reports backgroundJobs: false (Agentrix Phase 1).
+// Set false when GET /api/features reports backgroundJobs: false.
+// Agentrix soft-async reports true (in-process queue; needs minScale: 1).
 let backgroundJobsAvailable = true;
 
 /** @type {{ fileName: string, status: string, detail: string, docIndex: number }[]} */
@@ -6580,10 +6581,9 @@ if (jobIdParam) {
   renderLastJobBanner();
 }
 
-// Agentrix Phase 1 (and any runtime without background workers) advertises
-// capabilities at GET /api/features. Cloudflare has no such route — leave
-// the background UI visible there. On Agentrix, hide job controls until
-// Phase 2 ports the queue/worker stack.
+// Agentrix soft-async (and Cloudflare) advertise capabilities at GET /api/features.
+// When backgroundJobs is false, hide job controls. Soft-async sets true with
+// backgroundJobsMode: "soft-async".
 (async () => {
   try {
     const res = await fetch("/api/features");
@@ -6595,6 +6595,8 @@ if (jobIdParam) {
       jobHistoryBtn.style.display = "none";
       lastJobBannerEl.style.display = "none";
       runBtn.title = "Run extraction one label at a time (batch queue). Background jobs are not enabled on this host yet.";
+    } else if (features.backgroundJobsMode === "soft-async") {
+      runBgBtn.title = "Runs on the Agentrix pod (soft async). Keep minScale: 1; jobs are lost if the pod restarts. You can close this tab.";
     }
   } catch (_) { /* offline / file:// / Cloudflare without /api/features */ }
 })();

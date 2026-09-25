@@ -1,5 +1,6 @@
-// Agentrix Node server — static UI (app/) + AI relay (/api/extract).
-// Ports Cloudflare Pages Functions (extract + qc-summary) without CF runtime.
+// Agentrix Node server — static UI (app/) + AI relay (/api/extract) + soft-async
+// /api/jobs* (in-process queue; needs Knative minScale: 1).
+// Ports Cloudflare Pages Functions without CF runtime.
 // Zero npm dependencies: Node 20+ built-in http + fetch.
 //
 // Knative/Agentrix sets PORT (usually 8080). This process MUST listen on that
@@ -30,6 +31,7 @@ import {
 } from "./lib/governance.mjs";
 import { getGatewayAccessToken, gatewayConfig } from "./lib/entra.mjs";
 import { readMessagesStream, withStreamEnabled } from "./lib/anthropic-stream.mjs";
+import { initSoftJobs, handleSoftJobs } from "./lib/soft-jobs.mjs";
 
 const PORT = Number(process.env.PORT) || 8080;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -97,7 +99,9 @@ async function readBody(req, maxBytes) {
 async function handleFeatures(_req, res) {
   json(res, 200, {
     aiExtract: true,
-    backgroundJobs: false,
+    // Soft async: in-process queue + memory store. Needs Knative minScale: 1.
+    backgroundJobs: true,
+    backgroundJobsMode: "soft-async",
     runtime: "agentrix"
   });
 }
@@ -304,15 +308,6 @@ async function handleExtract(req, res) {
   }
 }
 
-function handleJobs(_req, res) {
-  json(res, 501, {
-    error: {
-      message:
-        "Background jobs are not available on this Agentrix deployment yet. Use interactive Run Extraction with Extract with AI checked."
-    }
-  });
-}
-
 function handleMcp(_req, res) {
   // Agentrix advertises /mcp; this app is a browser UI, not an MCP server.
   json(res, 200, {
@@ -399,7 +394,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (reqPath === "/api/jobs" || reqPath.startsWith("/api/jobs/")) {
-      return handleJobs(req, res);
+      return await handleSoftJobs(req, res, reqPath);
     }
 
     if (req.method === "GET" || req.method === "HEAD") {
@@ -417,6 +412,9 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+initSoftJobs(env.AUDIT_LOG);
+
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`UST Agentrix listening on 0.0.0.0:${PORT} (static: ${STATIC_ROOT})`);
+  console.log("soft-async jobs enabled — set Knative minScale: 1 so the pod stays warm");
 });
