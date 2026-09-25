@@ -102,6 +102,7 @@ async function handleFeatures(_req, res) {
     // Soft async: in-process queue + memory store. Needs Knative minScale: 1.
     backgroundJobs: true,
     backgroundJobsMode: "soft-async",
+    softAsyncBuild: "2026-09-25a",
     runtime: "agentrix"
   });
 }

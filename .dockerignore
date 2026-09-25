@@ -10,6 +10,7 @@ node_modules
 samples
 benchmark
 docs
+# Excluded: large source tree. Soft-async uses server/lib/knowledge-compiled.json instead.
 knowledge
 specs
 tests
