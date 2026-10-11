@@ -177,9 +177,9 @@ small governance layer (`functions/api/_lib/governance.js`, duplicated at
   of the shared mGA token. KV has no atomic increment, so this is approximate, not an
   adversarial-proof guarantee.
 - **Daily cost budget** — a cumulative daily token/cost counter (`DAILY_BUDGET_USD`,
-  default $15 — a placeholder; tune it to the shared token's real monthly allowance).
+  default **$100/day** — same default as Agentrix / `wrangler.toml`).
   Once exceeded, both paths refuse new work with a clear message rather than silently
-  draining a colleague's personal mGA budget.
+  draining the application budget.
 - **Audit trail** — one metadata-only record per call (timestamp, source, status,
   duration, estimated token usage/cost — never raw label text or PII), retained for
   `AUDIT_TTL_SECONDS` (default 180 days, a placeholder pending a real retention policy).

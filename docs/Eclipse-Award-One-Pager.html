@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Eclipse Award One-Pager — EPA Use Summary Tables AI Extractor</title>
+  <style>
+    @page { size: A4; margin: 12mm 14mm; }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      color: #1a2332;
+      background: #fff;
+      font-size: 10.5pt;
+      line-height: 1.35;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .page {
+      width: 100%;
+      max-width: 182mm;
+      margin: 0 auto;
+    }
+    header {
+      border-bottom: 3px solid #003d6b;
+      padding-bottom: 8px;
+      margin-bottom: 12px;
+    }
+    .eyebrow {
+      font-size: 8.5pt;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #5a6a7a;
+      margin: 0 0 4px;
+    }
+    h1 {
+      margin: 0 0 4px;
+      font-size: 16.5pt;
+      line-height: 1.2;
+      color: #003d6b;
+      font-weight: 700;
+    }
+    .subtitle {
+      margin: 0;
+      font-size: 10pt;
+      color: #3d4f63;
+    }
+    .meta {
+      margin-top: 6px;
+      font-size: 9pt;
+      color: #5a6a7a;
+    }
+    h2 {
+      margin: 12px 0 6px;
+      font-size: 11pt;
+      color: #003d6b;
+      border-left: 3px solid #0a7a72;
+      padding-left: 8px;
+      font-weight: 700;
+    }
+    p { margin: 0 0 6px; }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin: 8px 0 4px;
+    }
+    .metric {
+      background: #f0f5f9;
+      border: 1px solid #d5e0ea;
+      border-radius: 4px;
+      padding: 8px 8px 7px;
+      text-align: center;
+    }
+    .metric .num {
+      display: block;
+      font-size: 15pt;
+      font-weight: 700;
+      color: #003d6b;
+      line-height: 1.1;
+    }
+    .metric .label {
+      display: block;
+      margin-top: 3px;
+      font-size: 8pt;
+      color: #4a5c6e;
+      line-height: 1.25;
+    }
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin: 6px 0;
+    }
+    .box {
+      border-radius: 4px;
+      padding: 8px 10px;
+      border: 1px solid #d5e0ea;
+    }
+    .box.before { background: #faf6f1; border-color: #e4d5c3; }
+    .box.after { background: #eef7f4; border-color: #b8d9cf; }
+    .box h3 {
+      margin: 0 0 4px;
+      font-size: 9.5pt;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .box.before h3 { color: #8a5a2b; }
+    .box.after h3 { color: #0a6b55; }
+    .box ul {
+      margin: 0;
+      padding-left: 16px;
+    }
+    .box li { margin-bottom: 2px; }
+    ul.achievements {
+      margin: 4px 0 0;
+      padding-left: 18px;
+    }
+    ul.achievements li { margin-bottom: 4px; }
+    .guardrails {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .chip {
+      background: #f4f7fa;
+      border: 1px solid #d5e0ea;
+      border-radius: 4px;
+      padding: 6px 7px;
+      font-size: 8.5pt;
+      text-align: center;
+      font-weight: 600;
+      color: #243447;
+    }
+    strong { font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <p class="eyebrow">CS R&amp;D 2026 Eclipse Award · Maximize Digital Capabilities</p>
+      <h1>EPA Use Summary Tables AI Extractor</h1>
+      <p class="subtitle">From pesticide-label PDFs to EPA-ready Use Summary Tables — in minutes, with human review.</p>
+      <p class="meta">Bayer Life Sciences Regulatory · Production AI agent · Owned end-to-end from manual process to live system</p>
+    </header>
+
+    <h2>The opportunity</h2>
+    <p>
+      EPA submissions need a structured <strong>Use Summary Table</strong> (28 columns: crops, rates,
+      restrictions, PPE, and more). That information is buried across long pesticide-label PDFs.
+      Regulatory managers were building these tables <strong>by hand</strong> — slow, easy to miss
+      footnotes/appendices, and inconsistent across reviewers.
+    </p>
+
+    <div class="metrics">
+      <div class="metric">
+        <span class="num">100+ hrs</span>
+        <span class="label">Manual effort<br/>per table (before)</span>
+      </div>
+      <div class="metric">
+        <span class="num">Minutes</span>
+        <span class="label">AI draft +<br/>spot-check (now)</span>
+      </div>
+      <div class="metric">
+        <span class="num">$0.50–0.75</span>
+        <span class="label">Approx. cost<br/>per label</span>
+      </div>
+      <div class="metric">
+        <span class="num">88%</span>
+        <span class="label">Field-level accuracy<br/>vs expert table</span>
+      </div>
+    </div>
+
+    <h2>What we built</h2>
+    <p>
+      A production AI system that reads a pesticide label PDF and drafts the EPA Use Summary Table
+      for human review. Example run: <strong>149 pages → 155 rows × 28 columns</strong>, with
+      <strong>source text kept on every cell</strong>. Managers spot-check instead of transcribing —
+      so submissions reach market faster, and structured label data can be reused.
+    </p>
+
+    <div class="compare">
+      <div class="box before">
+        <h3>Before</h3>
+        <ul>
+          <li>100+ hours of hand transcription from PDFs</li>
+          <li>High risk of missed uses and footnotes</li>
+          <li>Submission waits on manual table build</li>
+          <li>Knowledge stays in documents, hard to reuse</li>
+        </ul>
+      </div>
+      <div class="box after">
+        <h3>Now</h3>
+        <ul>
+          <li>AI drafts the table in a few minutes</li>
+          <li>Source trail on every cell for verification</li>
+          <li>Faster path to EPA submission</li>
+          <li>Structured data ready for reuse downstream</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>How it meets Maximize Digital Capabilities</h2>
+    <p>
+      This is digital capability <strong>inside the real regulatory workflow</strong> — not a slide-deck demo.
+      It turns static label PDFs into trusted, structured data that people can review and systems can reuse,
+      with governance fit for regulated work (human sign-off before anything goes out).
+    </p>
+
+    <h2>Key achievements</h2>
+    <ul class="achievements">
+      <li><strong>Cycle time:</strong> Cut table creation from 100+ hours of hand work to minutes of AI draft + spot-check.</li>
+      <li><strong>Production delivery:</strong> Live in Bayer regulatory workflows, with measurable accuracy (88% field-level vs expert) and low run cost (~$0.50–$0.75/label).</li>
+      <li><strong>Safe to run:</strong> Kill switch, spend cap, audit trail, and mandatory human review — so speed does not replace accountability.</li>
+    </ul>
+
+    <h2>Guardrails built in</h2>
+    <div class="guardrails">
+      <div class="chip">Human sign-off</div>
+      <div class="chip">Source on every cell</div>
+      <div class="chip">Kill switch</div>
+      <div class="chip">Spend / cost cap</div>
+    </div>
+
+    <h2>Business value (in one line)</h2>
+    <p>
+      Faster EPA submissions, lower transcription cost and risk, and a reusable pattern for putting
+      governed AI into regulatory document work across the department.
+    </p>
+
+  </div>
+</body>
+</html>

@@ -35,8 +35,8 @@ but must be revisited before any broader rollout:
 - Server-side KV/token bindings are not scoped per-function (Pages Functions and the
   standalone Worker each hold the full binding set).
 - No automated dependency or secret-scanning tooling in CI.
-- Daily cost budget and audit retention values are placeholders, not tied to a real
-  budget/retention policy.
+- Daily cost budget defaults to $100/day (`DAILY_BUDGET_USD`); audit retention default
+  is still a placeholder pending a formal retention policy.
 
 ## Go / no-go decision
 

@@ -47,7 +47,7 @@
     "authentication": "Shared pilot secret header (x-ust-pilot / PILOT_GATE_SECRET) — acknowledged as a stopgap for a small pilot, not a durable auth boundary; a real Entra Agent ID managed identity is required before any broader rollout (see README.md's DSE-app route).",
     "killSwitch": "A KV-flag emergency stop (killswitch:enabled) checked before every AI call on both the interactive and background paths — disables extraction within seconds, no redeploy required. See README.md's 'Monitoring, audit trail & cost controls' section.",
     "rateLimiting": "Best-effort per-minute cap, default 20/min (RATE_LIMIT_PER_MINUTE).",
-    "dailyCostBudget": "Cumulative daily cap on estimated spend, default $15 (DAILY_BUDGET_USD) — a placeholder pending the shared token's real budget.",
+    "dailyCostBudget": "Cumulative daily cap on estimated spend, default $100/day (DAILY_BUDGET_USD) — matches Agentrix / wrangler.toml default.",
     "auditTrail": "Metadata-only record (timestamp, status, duration, estimated token usage/cost — never raw label text) per call, retained 180 days by default (AUDIT_TTL_SECONDS).",
     "contentSafety": "Flag-only heuristic scan for prompt-injection-style phrases in label text; never blocks extraction, only flags the audit record for human review.",
     "driftTracking": "The independent QC agent's severity verdict and remediation-cycle count are written into the audit trail for every document (both paths); scripts/check-drift.py is run on demand to compare a recent trailing window against the prior one and flag rising High/Critical share or remediation cycles. Detection only — no automatic action; correction stays a human decision. See README.md's 'Agent drift tracking' section.",

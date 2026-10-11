@@ -303,7 +303,7 @@ rect(slide, 0.85, 5.42, 11.6, 0.62, PALE, PALE, True)
 text(slide, "Pricing (internal estimate):", 1.1, 5.51, 2.5, 0.35, 13, NAVY, True)
 text(slide, "Sonnet 5   $3 / $15 per MTok (in/out)", 3.8, 5.51, 3.5, 0.35, 13, TEAL)
 text(slide, "Opus 5   $15 / $75 per MTok (in/out)", 7.5, 5.51, 3.5, 0.35, 13, RED)
-text(slide, "Clean label (2 Sonnet calls): ~$0.08–$0.12  ·  With remediation (+Opus): ~$1.60–$2.15  ·  Daily budget default: $15 / day", 0.85, 6.25, 11.6, 0.35, 13, MUTED, False, PP_ALIGN.CENTER)
+text(slide, "Clean label (2 Sonnet calls): ~$0.08–$0.12  ·  With remediation (+Opus): ~$1.60–$2.15  ·  Daily budget default: $100 / day", 0.85, 6.25, 11.6, 0.35, 13, MUTED, False, PP_ALIGN.CENTER)
 
 # 11
 slide = add_slide("10 / Deployment target", "From Cloudflare pilot to governed Bayer runtime")
