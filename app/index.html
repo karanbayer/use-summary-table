@@ -4370,7 +4370,7 @@ const REMEDIATION_MAX_CYCLES = 1;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-10-14b";
+const PIPELINE_BUILD = "2026-10-14c";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -4385,10 +4385,10 @@ const REMEDIATION_ROW_SKIP_THRESHOLD = Infinity;
 // Large / master labels use a tighter body budget so Pass-2 responses stay
 // under stream limits (85k windows produced 50+ skeletons and dropped).
 const EXTRACT_CHUNK_CHARS = 85000;
-const EXTRACT_CHUNK_CHARS_LARGE = 45000;
+const EXTRACT_CHUNK_CHARS_LARGE = 35000;
 const EXTRACT_FRONT_MATTER_MAX_PAGES = 8;
 /** Cap skeletons per Pass-2 call; denser windows are filled in batches. */
-const DETAIL_SKELETON_BATCH = 12;
+const DETAIL_SKELETON_BATCH = 6;
 /** Skip gap units when section detectors already cover most of the body. */
 const SKIP_GAP_UNITS_COVERAGE = 0.80;
 /**
@@ -6044,8 +6044,30 @@ async function extractWithLLM(doc, pState) {
     logEl.textContent += `   ⚠ QC context truncated to ${QC_MAX_CHARS.toLocaleString()} characters\n`;
   }
 
+  // Master labels can spend 30+ Gateway calls on extract; if QC then 503s /
+  // drops, do NOT throw away the draft rows — that caused a full-file retry
+  // which wiped 90 successful rows on Roundup-class runs (2026-10-14b).
   logEl.textContent += `   stage 2/3 — independent QC review (Sonnet)…\n`;
-  const qc = await runQcTurn(allRawRows, doc, qcLabelText, systemBlocks, tools, pState);
+  let qc;
+  try {
+    qc = await runQcTurn(allRawRows, doc, qcLabelText, systemBlocks, tools, pState);
+  } catch (err) {
+    logEl.textContent += `   ⚠ QC failed — ${err.message}. Keeping ${allRawRows.length} extraction row(s); QC marked Unavailable.\n`;
+    advanceAiProgress(pState, 1, "QC failed (stage 2/3)");
+    qc = {
+      messages: [],
+      qcReport: {
+        overall: "Unavailable",
+        defects: [{
+          severity: "Medium",
+          code: "QC-UNAVAILABLE",
+          message: `Independent QC did not complete: ${err.message}`,
+          rows: []
+        }]
+      },
+      lastToolUseId: null
+    };
+  }
   timer.mark("qc");
 
   logEl.textContent += qcNeedsRemediation(qc.qcReport)
