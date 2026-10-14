@@ -4370,7 +4370,7 @@ const REMEDIATION_MAX_CYCLES = 1;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-10-14a";
+const PIPELINE_BUILD = "2026-10-14b";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -4382,13 +4382,13 @@ const REMEDIATION_ROW_SKIP_THRESHOLD = Infinity;
 // Chunked extraction — keep each Gateway call under this character budget.
 // Front-matter (product identity pages) is prepended to every body chunk.
 // Default 85k packs small/medium labels into one chunk (fast single-pass).
-// Large labels (≥15 sections / ≥20 pages) use the same budget so they often
-// stay one chunk, but chooseExtractMode still forces two-pass (quality).
-// A tighter 55k large budget made SIVANTO 2× two-pass (~403s extract) — slower
-// than useful; we measure 1ch/2pass next.
+// Large / master labels use a tighter body budget so Pass-2 responses stay
+// under stream limits (85k windows produced 50+ skeletons and dropped).
 const EXTRACT_CHUNK_CHARS = 85000;
-const EXTRACT_CHUNK_CHARS_LARGE = 85000;
+const EXTRACT_CHUNK_CHARS_LARGE = 45000;
 const EXTRACT_FRONT_MATTER_MAX_PAGES = 8;
+/** Cap skeletons per Pass-2 call; denser windows are filled in batches. */
+const DETAIL_SKELETON_BATCH = 12;
 /** Skip gap units when section detectors already cover most of the body. */
 const SKIP_GAP_UNITS_COVERAGE = 0.80;
 /**
@@ -5357,31 +5357,72 @@ async function extractChunkTwoPass(doc, chunk, chunkIndex, chunkCount, systemBlo
     }
     throw new Error(`Pass 1 produced no usable Use skeletons for chunk "${label}"`);
   }
-  logEl.textContent += `     pass 1 → ${skTurn.skeletons.length} skeleton(s)\n`;
+  const skeletons = skTurn.skeletons;
+  logEl.textContent += `     pass 1 → ${skeletons.length} skeleton(s)\n`;
 
-  const detailNote = [
-    chunkPreface + "Pass 2/2 — call emit_use_summary_rows.",
-    "Fill all schema columns for each skeleton (rates, intervals, PPE, restrictions).",
-    "Same order as skeletons; split a row only when methods truly differ on the label.",
-    "NS if silent, NA if not applicable — never invent.",
-    "",
-    "Pass-1 skeletons (JSON):",
-    JSON.stringify(skTurn.skeletons)
-  ].join("\n");
+  // Dense master-label windows can emit 50+ skeletons; one Pass-2 stream for
+  // all of them often dies with "Network connection lost". Fill in batches.
+  const batches = [];
+  for (let i = 0; i < skeletons.length; i += DETAIL_SKELETON_BATCH) {
+    batches.push(skeletons.slice(i, i + DETAIL_SKELETON_BATCH));
+  }
+  if (batches.length > 1) {
+    logEl.textContent += `     pass 2 — ${skeletons.length} skeletons → ${batches.length} detail batch(es) (≤${DETAIL_SKELETON_BATCH} each)\n`;
+  }
 
-  const detTurn = await runDetailPass(
-    doc, chunk.text, systemBlocks, tools, pState, skTurn.skeletons, detailNote
-  );
-  const merged = mergeSkeletonsIntoRows(skTurn.skeletons, detTurn.rawRows);
-  if (isMostlyEmptyNsRows(merged)) {
+  const allMerged = [];
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    const batchLabel = batches.length === 1
+      ? label
+      : `${label} detail ${b + 1}/${batches.length}`;
+    const detailNote = [
+      chunkPreface + `Pass 2/2 — call emit_use_summary_rows (${batchLabel}).`,
+      `Fill all schema columns for these ${batch.length} skeleton(s) only (rates, intervals, PPE, restrictions).`,
+      "Same order as the skeletons below; split a row only when methods truly differ on the label.",
+      "NS if silent, NA if not applicable — never invent.",
+      "",
+      "Pass-1 skeletons for this batch (JSON):",
+      JSON.stringify(batch)
+    ].join("\n");
+
+    try {
+      const detTurn = await runDetailPass(
+        doc, chunk.text, systemBlocks, tools, pState, batch, detailNote
+      );
+      const merged = mergeSkeletonsIntoRows(batch, detTurn.rawRows);
+      if (isMostlyEmptyNsRows(merged)) {
+        logEl.textContent += `     ⚠ pass 2 — empty/NS-only for "${batchLabel}"`
+          + (batches.length > 1 || chunkCount > 1 ? " (continuing)\n" : "\n");
+        if (batches.length === 1 && chunkCount === 1) {
+          throw new Error(`Pass 2 returned empty or NS-only rows for chunk "${label}"`);
+        }
+        continue;
+      }
+      allMerged.push(...merged);
+      logEl.textContent += `     pass 2 → ${merged.length} full row(s)`
+        + (batches.length > 1 ? ` (${batchLabel})` : "") + `\n`;
+    } catch (err) {
+      if (batches.length > 1 || chunkCount > 1) {
+        logEl.textContent += `     ⚠ pass 2 failed for "${batchLabel}" — ${err.message} (continuing)\n`;
+        console.warn(`[Extractor] detail batch failed (${batchLabel}):`, err);
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  if (!allMerged.length) {
     if (chunkCount > 1) {
-      logEl.textContent += `     ⚠ pass 2 — empty/NS-only for "${label}" (skipping chunk; continuing file)\n`;
+      logEl.textContent += `     ⚠ pass 2 — no rows kept for "${label}" (skipping chunk; continuing file)\n`;
       return [];
     }
     throw new Error(`Pass 2 returned empty or NS-only rows for chunk "${label}"`);
   }
-  logEl.textContent += `     pass 2 → ${merged.length} full row(s)\n`;
-  return merged;
+  if (batches.length > 1) {
+    logEl.textContent += `     pass 2 total → ${allMerged.length} full row(s) for "${label}"\n`;
+  }
+  return allMerged;
 }
 
 // Stage 1 — (legacy single-pass helper retained for clarity; chunk path uses two-pass).
