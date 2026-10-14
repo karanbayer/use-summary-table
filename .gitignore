@@ -5,6 +5,7 @@
 # Ignore any accidentally downloaded test files outside samples/
 *.pdf
 !samples/*.pdf
+!samples/scale/*.pdf
 
 # Editor directories
 .vscode/
