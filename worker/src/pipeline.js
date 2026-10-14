@@ -48,7 +48,13 @@ const REMEDIATION_MAX_CYCLES = 1; // pilot: one Opus patch cycle max (was 2)
 // /v1/models on global.ai-gateway.int.bayer.ai).
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
-/** Match interactive app pipeline for large / master labels (2026-10-14e). */
+/**
+ * Size-tiered pipeline (2026-10-14f) — harden only when needed:
+ *   small  (< FORCE_TWO_PASS_MIN_PAGES): fast path, short QC, soft Unavailable OK
+ *   large  (20–99p): 35k windows, standard retries
+ *   mega   (≥ MEGA_LABEL_MIN_PAGES): 22k windows, batch-4, pauses, cited/batched QC
+ *           (harder retries — still keep draft rows if QC cannot finish)
+ */
 const EXTRACT_CHUNK_CHARS_LARGE = 35000;
 const EXTRACT_CHUNK_CHARS_MEGA = 22000;
 const MEGA_LABEL_MIN_PAGES = 100;
@@ -56,12 +62,19 @@ const EXTRACT_FRONT_MATTER_MAX_PAGES = 8;
 const DETAIL_SKELETON_BATCH = 6;
 const DETAIL_SKELETON_BATCH_MEGA = 4;
 const CHUNK_EXTRACT_MAX_ATTEMPTS = 3;
-const INTER_CHUNK_PAUSE_MS = 1500;
+/** No inter-chunk pause on small/medium — only mega needs Gateway cooldown. */
 const INTER_CHUNK_PAUSE_MEGA_MS = 3500;
 const FORCE_TWO_PASS_MIN_PAGES = 20;
 const QC_MAX_ATTEMPTS = 3;
+const QC_MAX_ATTEMPTS_MEGA = 5;
 const QC_MAX_CHARS = 150000;
 const QC_MAX_CHARS_LARGE = 80000;
+const QC_MAX_CHARS_MEGA = 45000;
+const QC_ROW_BATCH = 28;
+
+function isMegaLabel(pageCount, rowCount = 0) {
+  return pageCount >= MEGA_LABEL_MIN_PAGES || rowCount >= 80;
+}
 const SKELETON_COLUMNS = [
   "Reg. #/File Sym", "Physical Form", "Product Name (PBN)", "Alternative Brand Name (ABN)",
   "Use", "Use Site", "App. Target", "App. Type", "App. Equipment",
@@ -723,7 +736,7 @@ function detailBatchSizeForPages(pageCount) {
 }
 
 function interChunkPauseForPages(pageCount) {
-  return pageCount >= MEGA_LABEL_MIN_PAGES ? INTER_CHUNK_PAUSE_MEGA_MS : INTER_CHUNK_PAUSE_MS;
+  return pageCount >= MEGA_LABEL_MIN_PAGES ? INTER_CHUNK_PAUSE_MEGA_MS : 0;
 }
 
 function isRetryablePipelineError(err) {
@@ -872,12 +885,69 @@ async function extractChunkTwoPass(
   return allMerged;
 }
 
+/** Prefer pages cited on rows (+ identity pages). Front-truncation on masters
+ *  only kept barren legal/PPE text and made QC streams die uselessly. */
+function buildQcLabelText(pageMarkedText, rawRows, maxChars) {
+  const pages = parseMarkedPages(pageMarkedText);
+  if (!pages.length) {
+    return pageMarkedText.length > maxChars
+      ? pageMarkedText.slice(0, maxChars) + `\n\n[Label truncated for QC at ${maxChars} chars]`
+      : pageMarkedText;
+  }
+  const cited = new Set();
+  for (let i = 0; i < Math.min(3, pages.length); i++) cited.add(pages[i].page);
+  for (const r of rawRows || []) {
+    const raw = String(r?.Page ?? "");
+    for (const m of raw.matchAll(/\d+/g)) {
+      const n = Number(m[0]);
+      if (Number.isFinite(n)) {
+        cited.add(n);
+        cited.add(n - 1);
+        cited.add(n + 1);
+      }
+    }
+  }
+  const byPage = new Map(pages.map(p => [p.page, p]));
+  const ordered = [...cited].filter(n => byPage.has(n)).sort((a, b) => a - b);
+  const parts = [];
+  let len = 0;
+  for (const n of ordered) {
+    const block = `--- PAGE ${n} ---\n${byPage.get(n).text}`;
+    if (parts.length && len + block.length > maxChars) break;
+    parts.push(block);
+    len += block.length;
+  }
+  if (!parts.length) {
+    return pageMarkedText.slice(0, maxChars)
+      + `\n\n[Label truncated for QC at ${maxChars} chars]`;
+  }
+  let out = parts.join("\n\n");
+  if (ordered.length < pages.length || len >= maxChars) {
+    out += `\n\n[QC label slice: ${parts.length} cited/neighbor page(s); not full ${pages.length}-page label]`;
+  }
+  return out;
+}
+
+function mergeQcReports(reports) {
+  const rank = { Critical: 4, High: 3, Medium: 2, Low: 1, Clean: 0, Unavailable: 3 };
+  let overall = "Clean";
+  const defects = [];
+  for (const r of reports) {
+    const o = r?.overall || "Clean";
+    if ((rank[o] || 0) > (rank[overall] || 0)) overall = o;
+    for (const d of r?.defects || []) defects.push(d);
+  }
+  return { overall, defects };
+}
+
 // Stage 2 — QC agent (Sonnet), with independent retries — never re-extracts.
-async function runQcTurn(env, jobId, fileIndex, rawRows, doc, pageMarkedText, systemBlocks, tools, usageTotals) {
+async function runQcTurn(env, jobId, fileIndex, rawRows, doc, pageMarkedText, systemBlocks, tools, usageTotals, rowOffset = 0) {
   await reportStage(env, jobId, fileIndex, "independent QC review (stage 2/3)");
   const stageText = [
-    "You are now acting as an independent QC reviewer — a senior regulatory manager auditing someone else's extraction, not the person who produced it. Run all 5 passes: structural (schema compliance, no blanks), column-wise plausibility, row-wise verification against the label text above, completeness (every crop/use/method the label states, R-17/R-21/R-25), and confidence calibration.",
-    "The candidate row set to review (JSON, 0-based indices):",
+    "You are now acting as an independent QC reviewer — a senior regulatory manager auditing someone else's extraction, not the person who produced it. Run all 5 passes: structural (schema compliance, no blanks), column-wise plausibility, row-wise verification against the label text above, completeness for the rows given, and confidence calibration.",
+    rowOffset
+      ? `These rows are a batch starting at global index ${rowOffset}. Use global 0-based indices in defects (add ${rowOffset} to batch-local index).`
+      : "The candidate row set to review (JSON, 0-based indices):",
     JSON.stringify(rawRows)
   ].join("\n");
   const messages = [
@@ -892,29 +962,58 @@ async function runQcTurn(env, jobId, fileIndex, rawRows, doc, pageMarkedText, sy
 
 async function runQcTurnWithRetries(env, jobId, fileIndex, rawRows, doc, pageMarkedText, systemBlocks, tools, usageTotals) {
   const pages = parseMarkedPages(pageMarkedText);
-  const large = pages.length >= FORCE_TWO_PASS_MIN_PAGES;
-  let maxChars = large ? QC_MAX_CHARS_LARGE : QC_MAX_CHARS;
+  const mega = isMegaLabel(pages.length, rawRows.length);
+  const maxAttempts = mega ? QC_MAX_ATTEMPTS_MEGA : QC_MAX_ATTEMPTS;
+  let maxChars = mega
+    ? QC_MAX_CHARS_MEGA
+    : (pages.length >= FORCE_TWO_PASS_MIN_PAGES ? QC_MAX_CHARS_LARGE : QC_MAX_CHARS);
   let lastErr = null;
-  for (let attempt = 1; attempt <= QC_MAX_ATTEMPTS; attempt++) {
-    let qcLabelText = pageMarkedText;
-    if (qcLabelText.length > maxChars) {
-      qcLabelText = qcLabelText.slice(0, maxChars)
-        + `\n\n[Label truncated for QC context at ${maxChars.toLocaleString()} characters]`;
-    }
-    try {
-      if (attempt > 1) {
-        console.log(`QC retry ${attempt}/${QC_MAX_ATTEMPTS} — keeping ${rawRows.length} extraction row(s); not re-extracting`);
-        await sleep(RETRY_BASE_DELAY_MS * attempt);
+
+  const runOne = async (rows, offset) => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // Mega: cited-page slice. Small/medium: simple head truncate (fast, enough).
+      const qcLabelText = mega
+        ? buildQcLabelText(pageMarkedText, rows, maxChars)
+        : (pageMarkedText.length > maxChars
+          ? pageMarkedText.slice(0, maxChars) + `\n\n[Label truncated for QC at ${maxChars} chars]`
+          : pageMarkedText);
+      try {
+        if (attempt > 1) {
+          console.log(`QC retry ${attempt}/${maxAttempts} (offset ${offset}) — ${rows.length} row(s); not re-extracting`);
+          await sleep(RETRY_BASE_DELAY_MS * attempt * (mega ? 2 : 1));
+        }
+        return await runQcTurn(
+          env, jobId, fileIndex, rows, doc, qcLabelText, systemBlocks, tools, usageTotals, offset
+        );
+      } catch (err) {
+        if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;
+        lastErr = err;
+        console.warn(`QC attempt ${attempt}/${maxAttempts} (offset ${offset}) failed — ${err.message}`);
+        maxChars = Math.max(mega ? 22000 : 40000, Math.floor(maxChars * 0.7));
       }
-      return await runQcTurn(env, jobId, fileIndex, rawRows, doc, qcLabelText, systemBlocks, tools, usageTotals);
-    } catch (err) {
-      if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;
-      lastErr = err;
-      console.warn(`QC attempt ${attempt}/${QC_MAX_ATTEMPTS} failed — ${err.message}`);
-      maxChars = Math.max(40000, Math.floor(maxChars * 0.65));
     }
+    throw lastErr || new Error("QC failed after retries");
+  };
+
+  // Batched QC only on mega — small/medium stay one call.
+  if (!mega || rawRows.length <= QC_ROW_BATCH) {
+    return runOne(rawRows, 0);
   }
-  throw lastErr || new Error("QC failed after retries");
+
+  console.log(`QC mega mode — ${rawRows.length} row(s) in batches of ${QC_ROW_BATCH}`);
+  const reports = [];
+  let lastState = null;
+  for (let i = 0; i < rawRows.length; i += QC_ROW_BATCH) {
+    const batch = rawRows.slice(i, i + QC_ROW_BATCH);
+    lastState = await runOne(batch, i);
+    reports.push(lastState.qcReport);
+    await sleep(INTER_CHUNK_PAUSE_MEGA_MS);
+  }
+  return {
+    messages: lastState?.messages || [],
+    qcReport: mergeQcReports(reports),
+    lastToolUseId: lastState?.lastToolUseId || null
+  };
 }
 
 // Stage 3 — bounded remediation loop: only engages when QC found Critical/
@@ -1037,7 +1136,7 @@ export async function extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText)
   const allRawRows = [];
   const pageCount = parseMarkedPages(pageMarkedText).length;
 
-  console.log(`${doc.fileName} — stage 1/3 — two-pass extraction (${chunks.length} chunk(s), pipeline 2026-10-14e)…`);
+  console.log(`${doc.fileName} — stage 1/3 — two-pass extraction (${chunks.length} chunk(s), pipeline 2026-10-14f, tier=${isMegaLabel(pageCount) ? "mega" : (pageCount >= FORCE_TWO_PASS_MIN_PAGES ? "large" : "small")})…`);
   await reportStage(env, jobId, fileIndex, `extraction (stage 1/3, ${chunks.length} chunk(s))`);
   let skipped = 0;
   for (let i = 0; i < chunks.length; i++) {
@@ -1086,6 +1185,9 @@ export async function extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText)
     );
   } catch (err) {
     if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;
+    // Always keep extraction rows — never fail the file solely because QC
+    // streams died. Mega labels already got extra QC attempts / batched QC.
+    const attempts = isMegaLabel(pageCount, allRawRows.length) ? QC_MAX_ATTEMPTS_MEGA : QC_MAX_ATTEMPTS;
     console.warn(`QC failed after retries — ${err.message}. Keeping ${allRawRows.length} extraction row(s).`);
     qc = {
       messages: [],
@@ -1094,7 +1196,7 @@ export async function extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText)
         defects: [{
           severity: "Medium",
           code: "QC-UNAVAILABLE",
-          message: `Independent QC did not complete after ${QC_MAX_ATTEMPTS} attempts: ${err.message}`,
+          message: `Independent QC did not complete after ${attempts} attempts: ${err.message}`,
           rows: []
         }]
       },

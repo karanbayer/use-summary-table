@@ -409,6 +409,11 @@ Findings recorded in `docs/CODE-REVIEW.md`.
     Done when: "AI relay stream ended without a result" is treated as retryable; 100p+ labels use 22k char windows and Pass-2 batches of 4; chunk/Pass-2 failures retry with backoff before skipping; Worker pipeline matches; log shows `2026-10-14e`.
     Note: triggered by 524-659 interactive run — first ~93 rows OK, then cascade of non-retried stream drops from pages 61+. Fix in `app/index.html` + `worker/src/pipeline.js`.
 
+[x] Task 61: Size-tiered hardening (small/medium fast, mega hardened)
+    Satisfies: R3, R4
+    Done when: mega (≥100p or ≥80 rows) gets smaller chunks, Pass-2 batch 4, inter-chunk pause, cited-page + batched QC with more retries; small/medium keep fast path (no pause, simple QC); extraction rows always kept if QC streams die; pipeline `2026-10-14f`.
+    Note: Worker + app. Overnight Wave C benefits from Worker redeploy.
+
 
 
 
