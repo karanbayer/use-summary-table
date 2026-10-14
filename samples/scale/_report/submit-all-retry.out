@@ -1,0 +1,40 @@
+[2026-10-14T16:56:51Z] Live scale run mode=submit-all — 29 PDFs
+[2026-10-14T16:56:51Z] Progress: /Users/karandeep.singh/Downloads/use-summary-table/samples/scale/_report/live-run.log
+[2026-10-14T16:56:51Z] Jobs API reachable (probe HTTP 404)
+[2026-10-14T16:56:51Z] WAVE A: submitting 5 file(s) as job 415475ee-aaf1-4dd7-9db2-04bab9b68506
+[2026-10-14T16:56:55Z]   ✔ [1/5] 264-1129_INDAZIFLAM TECHNICAL_8_2_2023_BASE.pdf (4p, 16647 chars) HTTP 202
+[2026-10-14T16:57:00Z]   ✔ [2/5] 000387_ML_01.01_base.pdf (5p, 17269 chars) HTTP 202
+[2026-10-14T16:57:05Z]   ✔ [3/5] 000380_ML_02.03_base.pdf (5p, 17768 chars) HTTP 202
+[2026-10-14T16:57:09Z]   ✔ [4/5] 264-PA31_Icafolin-methyl_06_09_2025_BASE.pdf (5p, 17922 chars) HTTP 202
+[2026-10-14T16:57:14Z]   ✔ [5/5] 000383_ML_02.03_base.pdf (6p, 24742 chars) HTTP 202
+[2026-10-14T16:57:16Z] WAVE B: submitting 10 file(s) as job 67cdb25d-b9b9-4b34-b76d-1581cc292783
+[2026-10-14T16:57:19Z]   ✔ [1/10] 000385_ML_02.04_base.pdf (7p, 20213 chars) HTTP 202
+[2026-10-14T16:57:24Z]   ✔ [2/10] 001100_ML_03.01_base.pdf (7p, 28815 chars) HTTP 202
+[2026-10-14T16:57:29Z]   ✔ [3/10] 000397_ML_03.03_base.pdf (8p, 21513 chars) HTTP 202
+[2026-10-14T16:57:34Z]   ✔ [4/10] 000719_ML_03.02_base.pdf (8p, 23860 chars) HTTP 202
+[2026-10-14T16:57:38Z]   ✔ [5/10] 000386_ML_02.05_base.pdf (8p, 26958 chars) HTTP 202
+[2026-10-14T16:57:44Z]   ✔ [6/10] 000382_ML_01.01_base.pdf (10p, 26611 chars) HTTP 202
+[2026-10-14T16:57:48Z]   ✔ [7/10] 000384_ML_04.03_base.pdf (10p, 29564 chars) HTTP 202
+[2026-10-14T16:57:53Z]   ✔ [8/10] 001086_ML_02.01_base.pdf (11p, 29875 chars) HTTP 202
+[2026-10-14T16:57:57Z]   ✔ [9/10] 264-1142_BYI 02960 480 FS_10_21_2025_BASE.pdf (11p, 33637 chars) HTTP 202
+[2026-10-14T16:58:02Z]   ✔ [10/10] 000381_ML_06.01_base.pdf (12p, 35293 chars) HTTP 202
+[2026-10-14T16:58:04Z] WAVE C: submitting 14 file(s) as job a67d97ca-ab57-4dc7-9501-3f3233c01455
+[2026-10-14T16:58:07Z]   ✔ [1/14] 264-XXXX_USH679EC412_06_11_2025_BASE.pdf (15p, 61650 chars) HTTP 202
+[2026-10-14T16:58:12Z]   ✔ [2/14] 264-REGG_PLENEXOS SMART_02_20_2026_BASE.pdf (16p, 53906 chars) HTTP 202
+[2026-10-14T16:58:17Z]   ✔ [3/14] 264-XXXX_USH679SC470_06_11_2025_BASE.pdf (16p, 62796 chars) HTTP 202
+[2026-10-14T16:58:23Z]   ✔ [4/14] 264-XXXX_USH679EC427_06_11_2025_BASE.pdf (16p, 63449 chars) HTTP 202
+[2026-10-14T16:58:30Z]   ✔ [5/14] 264-XXXX_USH679SC450_06_11_2025_BASE.pdf (18p, 73118 chars) HTTP 202
+[2026-10-14T16:58:35Z]   ✔ [6/14] 264-XXXX_USH679SC200_06_11_2025_BASE.pdf (21p, 79923 chars) HTTP 202
+[2026-10-14T16:58:44Z]   ✔ [7/14] 264-1203_Alion® Complete_3_15_2025_BASE.pdf (22p, 63811 chars) HTTP 202
+[2026-10-14T16:58:50Z]   ✔ [8/14] 264-1105_Indaziflam 500SC Herbicide_6_2_2025_BASE.pdf (27p, 99785 chars) HTTP 202
+[2026-10-14T16:58:56Z]   ✔ [9/14] 264-1106_Indaziflam 200 SC Herbicide_5_19_2025_BASE.pdf (31p, 113447 chars) HTTP 202
+[2026-10-14T16:59:01Z]   ✔ [10/14] 264-1141_SIVANTO® 200 SL_9_24_2020_BASE.pdf (36p, 87697 chars) HTTP 202
+[2026-10-14T16:59:07Z]   ✔ [11/14] 264-1198_SIVANTO® 400 SL_9_5_2019_BASE.pdf (40p, 87117 chars) HTTP 202
+[2026-10-14T16:59:12Z]   ✔ [12/14] 264-REUN_SIVANTO 300 SL_12_21_2023_BASE.pdf (46p, 95523 chars) HTTP 202
+[2026-10-14T16:59:23Z]   ✔ [13/14] 000524-00659-20241213 (6).pdf (171p, 558079 chars) HTTP 202
+[2026-10-14T16:59:33Z]   ✔ [14/14] 000524-00539-20231106 (3).pdf (178p, 584524 chars) HTTP 202
+[2026-10-14T16:59:35Z] ALL WAVES QUEUED — laptop can sleep now. Cloudflare Worker continues.
+[2026-10-14T16:59:35Z]   Wave A: https://use-summary-table.pages.dev/?job=415475ee-aaf1-4dd7-9db2-04bab9b68506
+[2026-10-14T16:59:35Z]   Wave B: https://use-summary-table.pages.dev/?job=67cdb25d-b9b9-4b34-b76d-1581cc292783
+[2026-10-14T16:59:35Z]   Wave C: https://use-summary-table.pages.dev/?job=a67d97ca-ab57-4dc7-9501-3f3233c01455
+[2026-10-14T16:59:35Z] Morning cheat-sheet: /Users/karandeep.singh/Downloads/use-summary-table/samples/scale/_report/MORNING.md

@@ -1,0 +1,152 @@
+{
+  "wave": "B",
+  "jobId": "fdf7bc76-71cf-48a2-82c2-c355ba74a08b",
+  "createdAt": "2026-10-14T18:18:23Z",
+  "baseUrl": "https://use-summary-table.pages.dev",
+  "watchUrl": "https://use-summary-table.pages.dev/?job=fdf7bc76-71cf-48a2-82c2-c355ba74a08b",
+  "files": [
+    "000385_ML_02.04_base.pdf",
+    "001100_ML_03.01_base.pdf",
+    "000397_ML_03.03_base.pdf",
+    "000719_ML_03.02_base.pdf",
+    "000386_ML_02.05_base.pdf",
+    "000382_ML_01.01_base.pdf",
+    "000384_ML_04.03_base.pdf",
+    "001086_ML_02.01_base.pdf",
+    "264-1142_BYI 02960 480 FS_10_21_2025_BASE.pdf",
+    "000381_ML_06.01_base.pdf"
+  ],
+  "submissions": [
+    {
+      "fileIndex": 0,
+      "fileName": "000385_ML_02.04_base.pdf",
+      "pages": 7,
+      "chars": 20213,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "fdf7bc76-71cf-48a2-82c2-c355ba74a08b",
+        "fileIndex": 0
+      }
+    },
+    {
+      "fileIndex": 1,
+      "fileName": "001100_ML_03.01_base.pdf",
+      "pages": 7,
+      "chars": 28815,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "fdf7bc76-71cf-48a2-82c2-c355ba74a08b",
+        "fileIndex": 1
+      }
+    },
+    {
+      "fileIndex": 2,
+      "fileName": "000397_ML_03.03_base.pdf",
+      "pages": 8,
+      "chars": 21513,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "fdf7bc76-71cf-48a2-82c2-c355ba74a08b",
+        "fileIndex": 2
+      }
+    },
+    {
+      "fileIndex": 3,
+      "fileName": "000719_ML_03.02_base.pdf",
+      "pages": 8,
+      "chars": 23860,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "fdf7bc76-71cf-48a2-82c2-c355ba74a08b",
+        "fileIndex": 3
+      }
+    },
+    {
+      "fileIndex": 4,
+      "fileName": "000386_ML_02.05_base.pdf",
+      "pages": 8,
+      "chars": 26958,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "fdf7bc76-71cf-48a2-82c2-c355ba74a08b",
+        "fileIndex": 4
+      }
+    },
+    {
+      "fileIndex": 5,
+      "fileName": "000382_ML_01.01_base.pdf",
+      "pages": 10,
+      "chars": 26611,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "fdf7bc76-71cf-48a2-82c2-c355ba74a08b",
+        "fileIndex": 5
+      }
+    },
+    {
+      "fileIndex": 6,
+      "fileName": "000384_ML_04.03_base.pdf",
+      "pages": 10,
+      "chars": 29564,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "fdf7bc76-71cf-48a2-82c2-c355ba74a08b",
+        "fileIndex": 6
+      }
+    },
+    {
+      "fileIndex": 7,
+      "fileName": "001086_ML_02.01_base.pdf",
+      "pages": 11,
+      "chars": 29875,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "fdf7bc76-71cf-48a2-82c2-c355ba74a08b",
+        "fileIndex": 7
+      }
+    },
+    {
+      "fileIndex": 8,
+      "fileName": "264-1142_BYI 02960 480 FS_10_21_2025_BASE.pdf",
+      "pages": 11,
+      "chars": 33637,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "fdf7bc76-71cf-48a2-82c2-c355ba74a08b",
+        "fileIndex": 8
+      }
+    },
+    {
+      "fileIndex": 9,
+      "fileName": "000381_ML_06.01_base.pdf",
+      "pages": 12,
+      "chars": 35293,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "fdf7bc76-71cf-48a2-82c2-c355ba74a08b",
+        "fileIndex": 9
+      }
+    }
+  ],
+  "startedPollAt": "2026-10-14T18:19:10Z"
+}

@@ -1559,13 +1559,21 @@ function firstMatch(text, patterns) {
      7.0 fl oz/A ÷ 128 × 3.34 = 0.183 lb a.i./A
 ------------------------------------------------------------------ */
 const AI_CONCENTRATION = [
+  // Glyphosate-class: "equivalent to 575 grams of the acid … or 4.8 pounds per U.S. gallon"
+  // Prefer acid-equivalent lb/gal when both salt and acid figures appear.
+  /(?:acid\s+equivalent|glyphosate\s+acid|as\s+the\s+acid)[^.;\n]{0,80}?([\d.]+)\s*(?:lbs?|pounds?)\s+per\s+(?:U\.?S\.?\s+)?gallon/i,
+  /([\d.]+)\s*(?:lbs?|pounds?)\s+per\s+(?:U\.?S\.?\s+)?gallon[^.;\n]{0,60}?(?:acid\s+equivalent|glyphosate\s+acid|41\.?\d*\s*%\s*by\s*weight)/i,
   // "Contains 3.34 pounds of flupyradifurone per gallon"
   /contains?\s+([\d.]+)\s*(?:lbs?|pounds?)\s+of\s+[A-Za-z][A-Za-z\s-]{0,40}?\s+per\s+gallon/i,
   // "3.34 lb ai/gal", "3.34 pounds active ingredient per gallon"
   /([\d.]+)\s*(?:lbs?|pounds?)\s*(?:of\s+)?(?:a\.?\s?i\.?|active\s+ingredient)[^.;\n]{0,20}?(?:per|\/)\s*gal/i,
+  // "4.8 pounds per U.S. gallon" (generic — after AE-specific patterns)
+  /([\d.]+)\s*(?:lbs?|pounds?)\s+per\s+(?:U\.?S\.?\s+)?gallon/i,
   // "400 grams per litre" / "400 g ai/L"
-  /([\d.]+)\s*g(?:rams?)?\s*(?:a\.?\s?i\.?|active\s+ingredient)?\s*(?:per|\/)\s*(?:L\b|liter|litre)/i
+  /([\d.]+)\s*g(?:rams?)?\s*(?:a\.?\s?i\.?|active\s+ingredient|of\s+the\s+acid)?\s*(?:per|\/)\s*(?:L\b|liter|litre)/i
 ];
+/** Index of the g/L pattern in AI_CONCENTRATION (must stay last). */
+const AI_CONCENTRATION_G_PER_L_INDEX = AI_CONCENTRATION.length - 1;
 
 const GRAMS_PER_L_TO_LB_PER_GAL = 0.0083454;
 
@@ -1636,10 +1644,119 @@ function findAiConcentration(text) {
     if (!m) continue;
     const v = parseFloat(m[1]);
     if (!isFinite(v) || v <= 0) continue;
-    // The third pattern is g/L and must be converted; the others are already lb/gal.
-    return i === 2 ? v * GRAMS_PER_L_TO_LB_PER_GAL : v;
+    // Last pattern is g/L and must be converted; the others are already lb/gal.
+    return i === AI_CONCENTRATION_G_PER_L_INDEX ? v * GRAMS_PER_L_TO_LB_PER_GAL : v;
   }
   return null;
+}
+
+/** fl oz or qt product rate → lb a.i./A (acid-equivalent basis when conc is AE). */
+function productRateToLbAi(amount, unit, lbPerGal) {
+  const n = Number(amount);
+  if (!isFinite(n) || n <= 0 || !lbPerGal) return null;
+  const u = String(unit || "").toLowerCase();
+  let flOz = n;
+  if (/^qt|quart/.test(u)) flOz = n * 32;
+  else if (/^gal|gallon/.test(u)) flOz = n * 128;
+  else if (/^pt|pint/.test(u)) flOz = n * 16;
+  else if (!(/fl\.?\s*oz|fluid\s+ounce|^oz$/.test(u))) return null;
+  return flOzToLbAi(flOz, lbPerGal);
+}
+
+/**
+ * After AI extraction: fill NS lb a.i./A cells from (1) explicit acid-equivalent
+ * pounds on the row evidence, or (2) fl oz/qt product rates × label concentration.
+ * Arithmetic only — never invents a rate the label did not state (R19).
+ */
+function enrichAiRowRates(row, doc) {
+  if (doc.__aiConc === undefined) {
+    doc.__aiConc = concentrationForAi(doc.fullText || "", doc.selectedAi || null);
+  }
+  const conc = doc.__aiConc;
+  const blob = [
+    row["App Rate (lb ai/A)"],
+    row["A.I. Max Single Rate/App. (lb a.i./A)"],
+    row["A.I. Max Total Rate/Yr. (lb a.i./A)"],
+    row["Additional Information"],
+    row.__source,
+    row["Evidence"]
+  ].map(v => String(v || "")).join("\n");
+
+  const isNs = v => {
+    const s = String(v ?? "").trim();
+    return !s || s === NOT_SPECIFIED || s === "NA";
+  };
+  const looksProductUnits = v =>
+    /\b(?:fl\.?\s*oz|fluid\s+ounces?|quarts?|gal(?:lon)?s?)\b/i.test(String(v || ""))
+    && !/\blb\b/i.test(String(v || ""));
+
+  // Explicit AE pounds next to a rate (glyphosate master labels).
+  const aeSingle = blob.match(
+    /(\d+(?:\.\d+)?)\s*(?:lbs?|pounds?)\s+(?:glyphosate\s+)?(?:acid\s+)?equivalent[^.;\n]{0,40}?per\s+acre/i
+  );
+  const aePair = blob.match(
+    /(\d+(?:\.\d+)?)\s*(?:lbs?|pounds?).{0,40}?ground[^.;\n]{0,80}?(\d+(?:\.\d+)?)\s*(?:lbs?|pounds?).{0,40}?aerial/i
+  );
+  const aeAnnual = blob.match(
+    /(?:do\s+not\s+exceed|combined\s+total|per\s+year)[^.;\n]{0,80}?(\d+(?:\.\d+)?)\s*(?:lbs?|pounds?)\s+(?:glyphosate\s+)?(?:acid\s+)?equivalent[^.;\n]{0,40}?per\s+acre\s+per\s+year/i
+  ) || blob.match(
+    /(\d+(?:\.\d+)?)\s*(?:lbs?|pounds?)\s+(?:glyphosate\s+)?(?:acid\s+)?equivalent[^.;\n]{0,40}?per\s+acre\s+per\s+year/i
+  );
+
+  if (isNs(row["A.I. Max Single Rate/App. (lb a.i./A)"]) || looksProductUnits(row["A.I. Max Single Rate/App. (lb a.i./A)"])) {
+    if (aePair) {
+      row["A.I. Max Single Rate/App. (lb a.i./A)"] = `${round3(aePair[1])} (ground); ${round3(aePair[2])} (aerial)`;
+      row.__derived = row.__derived || {};
+      row.__derived["A.I. Max Single Rate/App. (lb a.i./A)"] = "D-rate-AE";
+    } else if (aeSingle) {
+      row["A.I. Max Single Rate/App. (lb a.i./A)"] = round3(aeSingle[1]);
+      row.__derived = row.__derived || {};
+      row.__derived["A.I. Max Single Rate/App. (lb a.i./A)"] = "D-rate-AE";
+    }
+  }
+  if (isNs(row["A.I. Max Total Rate/Yr. (lb a.i./A)"]) || looksProductUnits(row["A.I. Max Total Rate/Yr. (lb a.i./A)"])) {
+    if (aeAnnual) {
+      row["A.I. Max Total Rate/Yr. (lb a.i./A)"] = round3(aeAnnual[1]);
+      row.__derived = row.__derived || {};
+      row.__derived["A.I. Max Total Rate/Yr. (lb a.i./A)"] = "D-rate-AE";
+    }
+  }
+
+  if (!conc) return row;
+
+  // Product-unit rates in evidence / Additional Information / mis-filled cells.
+  const rateSources = [row["App Rate (lb ai/A)"], row["Additional Information"], row.__source, blob];
+  for (const src of rateSources) {
+    if (!isNs(row["App Rate (lb ai/A)"]) && !looksProductUnits(row["App Rate (lb ai/A)"])) break;
+    const range = String(src || "").match(
+      /(\d+(?:\.\d+)?)(?:\s*(?:[-–]|to)\s*(\d+(?:\.\d+)?))?\s*(fl\.?\s*oz|fluid\s+ounces?|quarts?|qt|gal(?:lon)?s?)\b[^.;\n]{0,40}?(?:per\s+acre|\/\s*A\b)/i
+    );
+    if (!range) continue;
+    const lo = productRateToLbAi(range[1], range[3], conc);
+    const hi = productRateToLbAi(range[2] || range[1], range[3], conc);
+    if (!lo || !hi) continue;
+    row["App Rate (lb ai/A)"] = lo === hi ? lo : `${lo} - ${hi}`;
+    row.__derived = row.__derived || {};
+    row.__derived["App Rate (lb ai/A)"] = "D-rate-convert";
+    if (isNs(row["A.I. Max Single Rate/App. (lb a.i./A)"])) {
+      row["A.I. Max Single Rate/App. (lb a.i./A)"] = hi;
+      row.__derived["A.I. Max Single Rate/App. (lb a.i./A)"] = "D-rate-convert";
+    }
+    break;
+  }
+
+  const cap = blob.match(
+    /(?:do\s+not\s+(?:apply\s+)?more\s+than|maximum(?:\s+of)?|up\s+to)\s*(\d+(?:\.\d+)?)\s*(fl\.?\s*oz|fluid\s+ounces?|quarts?|qt)\b[^.;\n]{0,60}?(?:per\s+acre|\/\s*A\b)?/i
+  );
+  if (cap && isNs(row["A.I. Max Single Rate/App. (lb a.i./A)"])) {
+    const v = productRateToLbAi(cap[1], cap[2], conc);
+    if (v) {
+      row["A.I. Max Single Rate/App. (lb a.i./A)"] = v;
+      row.__derived = row.__derived || {};
+      row.__derived["A.I. Max Single Rate/App. (lb a.i./A)"] = "D-rate-convert";
+    }
+  }
+  return row;
 }
 
 /** Rounds to 3 decimal places (unit-conversions.md rule 1). */
@@ -4372,7 +4489,7 @@ const REMEDIATION_MAX_CYCLES = 1;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-10-14f";
+const PIPELINE_BUILD = "2026-10-14g";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -6101,6 +6218,10 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
 // here rather than trusting the prompt alone. Applied once, on the final
 // row set, after every pipeline stage above has run.
 function buildAppRows(rawRows, doc) {
+  // Resolve concentration once so AI rows can be enriched (glyphosate AE, fl oz→lb ai).
+  if (doc && doc.__aiConc === undefined) {
+    doc.__aiConc = concentrationForAi(doc.fullText || "", doc.selectedAi || null);
+  }
   const rows = rawRows.map(raw => {
     const row = blankRow();
     SCHEMA.forEach(col => {
@@ -6113,6 +6234,7 @@ function buildAppRows(rawRows, doc) {
     row["Source File"] = doc.fileName;
     row.__source = raw["Evidence"] ? String(raw["Evidence"]) : "";
     row.__derived = {};
+    enrichAiRowRates(row, doc);
     row["Confidence"] = scoreRow(row);
     return row;
   });

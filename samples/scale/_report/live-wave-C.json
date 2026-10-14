@@ -1,0 +1,208 @@
+{
+  "wave": "C",
+  "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+  "createdAt": "2026-10-14T18:19:10Z",
+  "baseUrl": "https://use-summary-table.pages.dev",
+  "watchUrl": "https://use-summary-table.pages.dev/?job=d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+  "files": [
+    "264-XXXX_USH679EC412_06_11_2025_BASE.pdf",
+    "264-REGG_PLENEXOS SMART_02_20_2026_BASE.pdf",
+    "264-XXXX_USH679SC470_06_11_2025_BASE.pdf",
+    "264-XXXX_USH679EC427_06_11_2025_BASE.pdf",
+    "264-XXXX_USH679SC450_06_11_2025_BASE.pdf",
+    "264-XXXX_USH679SC200_06_11_2025_BASE.pdf",
+    "264-1203_Alion\u00ae Complete_3_15_2025_BASE.pdf",
+    "264-1105_Indaziflam 500SC Herbicide_6_2_2025_BASE.pdf",
+    "264-1106_Indaziflam 200 SC Herbicide_5_19_2025_BASE.pdf",
+    "264-1141_SIVANTO\u00ae 200 SL_9_24_2020_BASE.pdf",
+    "264-1198_SIVANTO\u00ae 400 SL_9_5_2019_BASE.pdf",
+    "264-REUN_SIVANTO 300 SL_12_21_2023_BASE.pdf",
+    "000524-00659-20241213 (6).pdf",
+    "000524-00539-20231106 (3).pdf"
+  ],
+  "submissions": [
+    {
+      "fileIndex": 0,
+      "fileName": "264-XXXX_USH679EC412_06_11_2025_BASE.pdf",
+      "pages": 15,
+      "chars": 61650,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+        "fileIndex": 0
+      }
+    },
+    {
+      "fileIndex": 1,
+      "fileName": "264-REGG_PLENEXOS SMART_02_20_2026_BASE.pdf",
+      "pages": 16,
+      "chars": 53906,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+        "fileIndex": 1
+      }
+    },
+    {
+      "fileIndex": 2,
+      "fileName": "264-XXXX_USH679SC470_06_11_2025_BASE.pdf",
+      "pages": 16,
+      "chars": 62796,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+        "fileIndex": 2
+      }
+    },
+    {
+      "fileIndex": 3,
+      "fileName": "264-XXXX_USH679EC427_06_11_2025_BASE.pdf",
+      "pages": 16,
+      "chars": 63449,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+        "fileIndex": 3
+      }
+    },
+    {
+      "fileIndex": 4,
+      "fileName": "264-XXXX_USH679SC450_06_11_2025_BASE.pdf",
+      "pages": 18,
+      "chars": 73118,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+        "fileIndex": 4
+      }
+    },
+    {
+      "fileIndex": 5,
+      "fileName": "264-XXXX_USH679SC200_06_11_2025_BASE.pdf",
+      "pages": 21,
+      "chars": 79923,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+        "fileIndex": 5
+      }
+    },
+    {
+      "fileIndex": 6,
+      "fileName": "264-1203_Alion\u00ae Complete_3_15_2025_BASE.pdf",
+      "pages": 22,
+      "chars": 63811,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+        "fileIndex": 6
+      }
+    },
+    {
+      "fileIndex": 7,
+      "fileName": "264-1105_Indaziflam 500SC Herbicide_6_2_2025_BASE.pdf",
+      "pages": 27,
+      "chars": 99785,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+        "fileIndex": 7
+      }
+    },
+    {
+      "fileIndex": 8,
+      "fileName": "264-1106_Indaziflam 200 SC Herbicide_5_19_2025_BASE.pdf",
+      "pages": 31,
+      "chars": 113447,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+        "fileIndex": 8
+      }
+    },
+    {
+      "fileIndex": 9,
+      "fileName": "264-1141_SIVANTO\u00ae 200 SL_9_24_2020_BASE.pdf",
+      "pages": 36,
+      "chars": 87697,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+        "fileIndex": 9
+      }
+    },
+    {
+      "fileIndex": 10,
+      "fileName": "264-1198_SIVANTO\u00ae 400 SL_9_5_2019_BASE.pdf",
+      "pages": 40,
+      "chars": 87117,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+        "fileIndex": 10
+      }
+    },
+    {
+      "fileIndex": 11,
+      "fileName": "264-REUN_SIVANTO 300 SL_12_21_2023_BASE.pdf",
+      "pages": 46,
+      "chars": 95523,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+        "fileIndex": 11
+      }
+    },
+    {
+      "fileIndex": 12,
+      "fileName": "000524-00659-20241213 (6).pdf",
+      "pages": 171,
+      "chars": 558079,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+        "fileIndex": 12
+      }
+    },
+    {
+      "fileIndex": 13,
+      "fileName": "000524-00539-20231106 (3).pdf",
+      "pages": 178,
+      "chars": 584524,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+        "fileIndex": 13
+      }
+    }
+  ],
+  "startedPollAt": "2026-10-14T18:20:34Z"
+}

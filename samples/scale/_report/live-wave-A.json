@@ -1,0 +1,82 @@
+{
+  "wave": "A",
+  "jobId": "ac3e4632-3789-449d-9688-a585a0e57e66",
+  "createdAt": "2026-10-14T18:17:58Z",
+  "baseUrl": "https://use-summary-table.pages.dev",
+  "watchUrl": "https://use-summary-table.pages.dev/?job=ac3e4632-3789-449d-9688-a585a0e57e66",
+  "files": [
+    "264-1129_INDAZIFLAM TECHNICAL_8_2_2023_BASE.pdf",
+    "000387_ML_01.01_base.pdf",
+    "000380_ML_02.03_base.pdf",
+    "264-PA31_Icafolin-methyl_06_09_2025_BASE.pdf",
+    "000383_ML_02.03_base.pdf"
+  ],
+  "submissions": [
+    {
+      "fileIndex": 0,
+      "fileName": "264-1129_INDAZIFLAM TECHNICAL_8_2_2023_BASE.pdf",
+      "pages": 4,
+      "chars": 16647,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "ac3e4632-3789-449d-9688-a585a0e57e66",
+        "fileIndex": 0
+      }
+    },
+    {
+      "fileIndex": 1,
+      "fileName": "000387_ML_01.01_base.pdf",
+      "pages": 5,
+      "chars": 17269,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "ac3e4632-3789-449d-9688-a585a0e57e66",
+        "fileIndex": 1
+      }
+    },
+    {
+      "fileIndex": 2,
+      "fileName": "000380_ML_02.03_base.pdf",
+      "pages": 5,
+      "chars": 17768,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "ac3e4632-3789-449d-9688-a585a0e57e66",
+        "fileIndex": 2
+      }
+    },
+    {
+      "fileIndex": 3,
+      "fileName": "264-PA31_Icafolin-methyl_06_09_2025_BASE.pdf",
+      "pages": 5,
+      "chars": 17922,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "ac3e4632-3789-449d-9688-a585a0e57e66",
+        "fileIndex": 3
+      }
+    },
+    {
+      "fileIndex": 4,
+      "fileName": "000383_ML_02.03_base.pdf",
+      "pages": 6,
+      "chars": 24742,
+      "submit": "ok",
+      "http": 202,
+      "resp": {
+        "ok": true,
+        "jobId": "ac3e4632-3789-449d-9688-a585a0e57e66",
+        "fileIndex": 4
+      }
+    }
+  ],
+  "startedPollAt": "2026-10-14T18:18:23Z"
+}

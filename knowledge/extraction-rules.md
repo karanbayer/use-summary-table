@@ -414,6 +414,19 @@ rows, with one pattern (western Oregon carbon-seeded) omitted entirely.
 
 ## R-22 · Use label's stated numeric values; do not substitute unrounded conversions
 
+### RATE-UNIT-GAP (any label — do not special-case product names)
+
+If **Evidence** or use directions state a product rate (`fl oz/A`, `qt/A`, `gal/A`) **or**
+an explicit acid-equivalent / lb a.i. figure, the **App Rate (lb ai/A)** and related max-rate
+columns must **not** remain `NS` when the label also states concentration (lb a.i./gal, % ai,
+or acid-equivalent lb/gal). Leaving `NS` in that situation is under-extraction, not R19
+compliance. Prefer the label's printed lb/AE figure when both product units and lb/AE appear;
+otherwise convert with `unit-conversions.md`. Percent spray solutions without a per-acre
+volume stay `NS` for lb ai/A (cannot convert).
+
+QC should flag **High / RATE-UNIT-GAP** when product units or AE pounds appear beside an
+`NS` App Rate — this is how unknown future labels are caught without hard-coding brand names.
+
 When the label states a rate in product units (fl oz/A) and a separate lb ai/A value for the
 same restriction, use the label's stated lb ai/A value — not a freshly computed conversion.
 

@@ -21,7 +21,7 @@ set -a
 source .dev.vars
 set +a
 
-TFY_BASE_URL="${TFY_BASE_URL:-https://global.ai-gateway.int.bayer.ai/api/llm}"
+TFY_BASE_URL="${TFY_BASE_URL:-https://eu.ai-gateway.int.bayer.ai/api/llm}"
 TFY_BASE_URL="${TFY_BASE_URL%/}"
 MODEL="${TFY_MODEL:-anthropic/claude-opus-5}"
 

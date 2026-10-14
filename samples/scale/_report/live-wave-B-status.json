@@ -1,0 +1,79 @@
+{
+  "jobId": "59b38ca9-adbb-4cc4-8781-d30b29c3a214",
+  "createdAt": "2026-10-14T16:35:28Z",
+  "totalFiles": 10,
+  "cancelled": false,
+  "cancelledAt": null,
+  "status": "done_with_errors",
+  "files": [
+    {
+      "fileIndex": 0,
+      "fileName": "000385_ML_02.04_base.pdf",
+      "status": "error",
+      "stage": "extraction 1/1 pass 1 (full)",
+      "error": "AI Gateway request failed (403): Unable to retrieve AWS credentials. Configure Bedrock auth (access key, assumed role, or API key) on the model account or guardrail."
+    },
+    {
+      "fileIndex": 1,
+      "fileName": "001100_ML_03.01_base.pdf",
+      "status": "error",
+      "stage": "extraction 1/1 pass 1 (full)",
+      "error": "AI Gateway request failed (403): Unable to retrieve AWS credentials. Configure Bedrock auth (access key, assumed role, or API key) on the model account or guardrail."
+    },
+    {
+      "fileIndex": 2,
+      "fileName": "000397_ML_03.03_base.pdf",
+      "status": "error",
+      "stage": "extraction 1/1 pass 1 (full)",
+      "error": "AI Gateway request failed (403): Unable to retrieve AWS credentials. Configure Bedrock auth (access key, assumed role, or API key) on the model account or guardrail."
+    },
+    {
+      "fileIndex": 3,
+      "fileName": "000719_ML_03.02_base.pdf",
+      "status": "error",
+      "error": "Job input was not found (it may have expired)."
+    },
+    {
+      "fileIndex": 4,
+      "fileName": "000386_ML_02.05_base.pdf",
+      "status": "error",
+      "stage": "extraction 1/1 pass 1 (full)",
+      "error": "AI Gateway request failed (403): Unable to retrieve AWS credentials. Configure Bedrock auth (access key, assumed role, or API key) on the model account or guardrail."
+    },
+    {
+      "fileIndex": 5,
+      "fileName": "000382_ML_01.01_base.pdf",
+      "status": "error",
+      "stage": "extraction 1/1 pass 1 (full)",
+      "error": "AI Gateway request failed (403): Unable to retrieve AWS credentials. Configure Bedrock auth (access key, assumed role, or API key) on the model account or guardrail."
+    },
+    {
+      "fileIndex": 6,
+      "fileName": "000384_ML_04.03_base.pdf",
+      "status": "error",
+      "stage": "extraction 1/1 pass 1 (full)",
+      "error": "AI Gateway request failed (403): Unable to retrieve AWS credentials. Configure Bedrock auth (access key, assumed role, or API key) on the model account or guardrail."
+    },
+    {
+      "fileIndex": 7,
+      "fileName": "001086_ML_02.01_base.pdf",
+      "status": "error",
+      "stage": "extraction 1/1 pass 1 (full)",
+      "error": "AI Gateway request failed (403): Unable to retrieve AWS credentials. Configure Bedrock auth (access key, assumed role, or API key) on the model account or guardrail."
+    },
+    {
+      "fileIndex": 8,
+      "fileName": "264-1142_BYI 02960 480 FS_10_21_2025_BASE.pdf",
+      "status": "error",
+      "stage": "extraction 1/1 pass 1 (full)",
+      "error": "AI Gateway request failed (403): Unable to retrieve AWS credentials. Configure Bedrock auth (access key, assumed role, or API key) on the model account or guardrail."
+    },
+    {
+      "fileIndex": 9,
+      "fileName": "000381_ML_06.01_base.pdf",
+      "status": "error",
+      "stage": "extraction (stage 1/3, 2 chunk(s))",
+      "error": "Two-pass extraction produced no rows across all chunks (2 chunk(s); 2 skipped/failed)"
+    }
+  ]
+}

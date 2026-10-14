@@ -1,0 +1,45 @@
+{
+  "jobId": "24a4f61f-f3d3-456d-89b6-6c3bdca03a44",
+  "createdAt": "2026-10-14T16:34:56Z",
+  "totalFiles": 5,
+  "cancelled": false,
+  "cancelledAt": null,
+  "status": "done_with_errors",
+  "files": [
+    {
+      "fileIndex": 0,
+      "fileName": "264-1129_INDAZIFLAM TECHNICAL_8_2_2023_BASE.pdf",
+      "status": "error",
+      "stage": "extraction 1/1 pass 1 (full)",
+      "error": "AI Gateway request failed (403): Unable to retrieve AWS credentials. Configure Bedrock auth (access key, assumed role, or API key) on the model account or guardrail."
+    },
+    {
+      "fileIndex": 1,
+      "fileName": "000387_ML_01.01_base.pdf",
+      "status": "error",
+      "stage": "extraction 1/1 pass 1 (full)",
+      "error": "AI Gateway request failed (403): Unable to retrieve AWS credentials. Configure Bedrock auth (access key, assumed role, or API key) on the model account or guardrail."
+    },
+    {
+      "fileIndex": 2,
+      "fileName": "000380_ML_02.03_base.pdf",
+      "status": "error",
+      "stage": "extraction 1/1 pass 1 (full)",
+      "error": "AI Gateway request failed (403): Unable to retrieve AWS credentials. Configure Bedrock auth (access key, assumed role, or API key) on the model account or guardrail."
+    },
+    {
+      "fileIndex": 3,
+      "fileName": "264-PA31_Icafolin-methyl_06_09_2025_BASE.pdf",
+      "status": "error",
+      "stage": "extraction 1/1 pass 1 (full)",
+      "error": "AI Gateway request failed (403): Unable to retrieve AWS credentials. Configure Bedrock auth (access key, assumed role, or API key) on the model account or guardrail."
+    },
+    {
+      "fileIndex": 4,
+      "fileName": "000383_ML_02.03_base.pdf",
+      "status": "error",
+      "stage": "extraction 1/1 pass 1 (full)",
+      "error": "AI Gateway request failed (403): Unable to retrieve AWS credentials. Configure Bedrock auth (access key, assumed role, or API key) on the model account or guardrail."
+    }
+  ]
+}

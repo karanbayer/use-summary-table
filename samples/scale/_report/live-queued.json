@@ -1,0 +1,32 @@
+{
+  "queuedAt": "2026-10-14T18:20:34Z",
+  "mode": "submit-all",
+  "jobs": [
+    {
+      "wave": "A",
+      "jobId": "ac3e4632-3789-449d-9688-a585a0e57e66",
+      "watchUrl": "https://use-summary-table.pages.dev/?job=ac3e4632-3789-449d-9688-a585a0e57e66",
+      "submittedOk": 5,
+      "total": 5
+    },
+    {
+      "wave": "B",
+      "jobId": "fdf7bc76-71cf-48a2-82c2-c355ba74a08b",
+      "watchUrl": "https://use-summary-table.pages.dev/?job=fdf7bc76-71cf-48a2-82c2-c355ba74a08b",
+      "submittedOk": 10,
+      "total": 10
+    },
+    {
+      "wave": "C",
+      "jobId": "d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+      "watchUrl": "https://use-summary-table.pages.dev/?job=d95c1b1b-eb9f-4433-bf05-a8b57b056528",
+      "submittedOk": 14,
+      "total": 14
+    }
+  ],
+  "morningInstructions": [
+    "Open each watchUrl below in a browser (or run: python3 scripts/scale_run_live.py --mode poll)",
+    "Read samples/scale/_report/live-final-summary.json after polling",
+    "Offline sizing notes: samples/scale/_report/scale-report.md"
+  ]
+}

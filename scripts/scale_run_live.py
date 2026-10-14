@@ -8,6 +8,7 @@ settled, then advances Wave A → B → C. Writes progress under samples/scale/_
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import uuid
@@ -22,7 +23,8 @@ except ImportError:
     print("Install pypdf: python3 -m pip install pypdf", file=sys.stderr)
     sys.exit(1)
 
-BASE_URL = "https://use-summary-table.pages.dev"
+# Override for local Node soft-async overnight: BASE_URL=http://127.0.0.1:8080
+BASE_URL = (os.environ.get("BASE_URL") or "https://use-summary-table.pages.dev").rstrip("/")
 PILOT_HEADER = "ust-pilot-2026"
 POLL_SECONDS = 45
 SUBMIT_GAP_SECONDS = 2  # stay under RATE_LIMIT_PER_MINUTE=20

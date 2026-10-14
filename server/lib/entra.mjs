@@ -5,7 +5,7 @@
 const DEFAULT_TENANT_ID = "fcb2b37b-5da0-466b-9b83-0014b67a7c78";
 const DEFAULT_CLIENT_ID = "5d0b410a-0b42-4427-8bd5-289c1ac0abce";
 const DEFAULT_SCOPE = "https://bayer.com/ai-gateway-prod-idp/.default";
-const DEFAULT_TFY_BASE_URL = "https://global.ai-gateway.int.bayer.ai/api/llm";
+const DEFAULT_TFY_BASE_URL = "https://eu.ai-gateway.int.bayer.ai/api/llm";
 
 let cachedToken = null;
 let cachedExpiresAtMs = 0;

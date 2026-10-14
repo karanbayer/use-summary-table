@@ -1,0 +1,43 @@
+{
+  "startedAt": "2026-10-14T18:17:58Z",
+  "baseUrl": "https://use-summary-table.pages.dev",
+  "mode": "submit-all",
+  "waves": {
+    "A": [
+      "264-1129_INDAZIFLAM TECHNICAL_8_2_2023_BASE.pdf",
+      "000387_ML_01.01_base.pdf",
+      "000380_ML_02.03_base.pdf",
+      "264-PA31_Icafolin-methyl_06_09_2025_BASE.pdf",
+      "000383_ML_02.03_base.pdf"
+    ],
+    "B": [
+      "000385_ML_02.04_base.pdf",
+      "001100_ML_03.01_base.pdf",
+      "000397_ML_03.03_base.pdf",
+      "000719_ML_03.02_base.pdf",
+      "000386_ML_02.05_base.pdf",
+      "000382_ML_01.01_base.pdf",
+      "000384_ML_04.03_base.pdf",
+      "001086_ML_02.01_base.pdf",
+      "264-1142_BYI 02960 480 FS_10_21_2025_BASE.pdf",
+      "000381_ML_06.01_base.pdf"
+    ],
+    "C": [
+      "264-XXXX_USH679EC412_06_11_2025_BASE.pdf",
+      "264-REGG_PLENEXOS SMART_02_20_2026_BASE.pdf",
+      "264-XXXX_USH679SC470_06_11_2025_BASE.pdf",
+      "264-XXXX_USH679EC427_06_11_2025_BASE.pdf",
+      "264-XXXX_USH679SC450_06_11_2025_BASE.pdf",
+      "264-XXXX_USH679SC200_06_11_2025_BASE.pdf",
+      "264-1203_Alion\u00ae Complete_3_15_2025_BASE.pdf",
+      "264-1105_Indaziflam 500SC Herbicide_6_2_2025_BASE.pdf",
+      "264-1106_Indaziflam 200 SC Herbicide_5_19_2025_BASE.pdf",
+      "264-1141_SIVANTO\u00ae 200 SL_9_24_2020_BASE.pdf",
+      "264-1198_SIVANTO\u00ae 400 SL_9_5_2019_BASE.pdf",
+      "264-REUN_SIVANTO 300 SL_12_21_2023_BASE.pdf",
+      "000524-00659-20241213 (6).pdf",
+      "000524-00539-20231106 (3).pdf"
+    ]
+  },
+  "note": "Live run via Cloudflare Worker + AI Gateway. submit-all queues everything so the laptop can power off."
+}

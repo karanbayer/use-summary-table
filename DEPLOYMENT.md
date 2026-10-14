@@ -40,7 +40,7 @@ Optional (defaults match `wrangler.toml`):
 | `AZURE_TENANT_ID` | `fcb2b37b-5da0-466b-9b83-0014b67a7c78` |
 | `AZURE_CLIENT_ID` | `5d0b410a-0b42-4427-8bd5-289c1ac0abce` |
 | `AZURE_SCOPE` | `https://bayer.com/ai-gateway-prod-idp/.default` |
-| `TFY_BASE_URL` | `https://global.ai-gateway.int.bayer.ai/api/llm` |
+| `TFY_BASE_URL` | `https://eu.ai-gateway.int.bayer.ai/api/llm` |
 | `RATE_LIMIT_PER_MINUTE` | `20` |
 | `DAILY_BUDGET_USD` | `100` |
 | `KILL_SWITCH_ENABLED` | unset / `false` |
@@ -149,7 +149,7 @@ https://your-site.pages.dev/api/extract
    - Validates the `x-ust-pilot: ust-pilot-2026` header
    - Obtains an Entra M2M access token (client credentials)
    - Forwards Anthropic Messages requests to Bayer AI Gateway
-     (`TFY_BASE_URL` + `/v1/messages`, default `https://global.ai-gateway.int.bayer.ai/api/llm`)
+     (`TFY_BASE_URL` + `/v1/messages`, default `https://eu.ai-gateway.int.bayer.ai/api/llm`)
    - Keeps `AZURE_CLIENT_SECRET` server-side (never exposed to browser)
    - Returns the model's structured response
 
@@ -203,7 +203,7 @@ PILOT_GATE_SECRET=ust-pilot-2026
 
 ### "Could not reach AI Gateway" / Gateway 401/403
 - Verify you're on Bayer's network or VPN
-- Check that `https://global.ai-gateway.int.bayer.ai` is reachable
+- Check that `https://eu.ai-gateway.int.bayer.ai` is reachable (pin EU — US plane lacks Bedrock creds for this app)
 - Confirm TrueFoundry Virtual Account maps your client ID (`azp`) under `bayer-entraid`
 - Model IDs: `anthropic/claude-sonnet-5` (extraction/QC), `anthropic/claude-opus-5` (remediation)
 

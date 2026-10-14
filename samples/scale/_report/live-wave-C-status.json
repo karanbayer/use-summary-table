@@ -1,0 +1,105 @@
+{
+  "jobId": "b0678198-398e-49e4-9e9a-efceed7c0155",
+  "createdAt": "2026-10-14T16:36:15Z",
+  "totalFiles": 14,
+  "cancelled": false,
+  "cancelledAt": null,
+  "status": "processing",
+  "files": [
+    {
+      "fileIndex": 0,
+      "fileName": "264-XXXX_USH679EC412_06_11_2025_BASE.pdf",
+      "status": "error",
+      "stage": "extraction (stage 1/3, 7 chunk(s))",
+      "error": "Two-pass extraction produced no rows across all chunks (7 chunk(s); 7 skipped/failed)"
+    },
+    {
+      "fileIndex": 1,
+      "fileName": "264-REGG_PLENEXOS SMART_02_20_2026_BASE.pdf",
+      "status": "error",
+      "stage": "extraction 5/7 pass 1 (pages 14\u201314)",
+      "error": "Two-pass extraction produced no rows across all chunks (7 chunk(s); 7 skipped/failed)"
+    },
+    {
+      "fileIndex": 2,
+      "fileName": "264-XXXX_USH679SC470_06_11_2025_BASE.pdf",
+      "status": "error",
+      "stage": "extraction 2/3 pass 1 (pages 14\u201315)",
+      "error": "Two-pass extraction produced no rows across all chunks (3 chunk(s); 3 skipped/failed)"
+    },
+    {
+      "fileIndex": 3,
+      "fileName": "264-XXXX_USH679EC427_06_11_2025_BASE.pdf",
+      "status": "error",
+      "stage": "extraction 1/3 pass 1 (pages 13\u201313)",
+      "error": "Two-pass extraction produced no rows across all chunks (3 chunk(s); 3 skipped/failed)"
+    },
+    {
+      "fileIndex": 4,
+      "fileName": "264-XXXX_USH679SC450_06_11_2025_BASE.pdf",
+      "status": "error",
+      "stage": "extraction 3/6 pass 1 (pages 15\u201315)",
+      "error": "Two-pass extraction produced no rows across all chunks (6 chunk(s); 6 skipped/failed)"
+    },
+    {
+      "fileIndex": 5,
+      "fileName": "264-XXXX_USH679SC200_06_11_2025_BASE.pdf",
+      "status": "error",
+      "stage": "extraction 6/8 pass 1 (pages 18\u201319)",
+      "error": "Two-pass extraction produced no rows across all chunks (8 chunk(s); 8 skipped/failed)"
+    },
+    {
+      "fileIndex": 6,
+      "fileName": "264-1203_Alion\u00ae Complete_3_15_2025_BASE.pdf",
+      "status": "error",
+      "stage": "extraction 5/7 pass 1 (pages 20\u201320)",
+      "error": "Two-pass extraction produced no rows across all chunks (7 chunk(s); 7 skipped/failed)"
+    },
+    {
+      "fileIndex": 7,
+      "fileName": "264-1105_Indaziflam 500SC Herbicide_6_2_2025_BASE.pdf",
+      "status": "error",
+      "stage": "extraction 9/19 pass 1 (pages 17\u201317)",
+      "error": "Two-pass extraction produced no rows across all chunks (19 chunk(s); 19 skipped/failed)"
+    },
+    {
+      "fileIndex": 8,
+      "fileName": "264-1106_Indaziflam 200 SC Herbicide_5_19_2025_BASE.pdf",
+      "status": "error",
+      "stage": "extraction 15/23 pass 1 (pages 23\u201323)",
+      "error": "Two-pass extraction produced no rows across all chunks (23 chunk(s); 23 skipped/failed)"
+    },
+    {
+      "fileIndex": 9,
+      "fileName": "264-1141_SIVANTO\u00ae 200 SL_9_24_2020_BASE.pdf",
+      "status": "error",
+      "stage": "extraction 8/9 pass 1 (pages 33\u201334)",
+      "error": "Two-pass extraction produced no rows across all chunks (9 chunk(s); 9 skipped/failed)"
+    },
+    {
+      "fileIndex": 10,
+      "fileName": "264-1198_SIVANTO\u00ae 400 SL_9_5_2019_BASE.pdf",
+      "status": "error",
+      "stage": "extraction 6/6 pass 1 (pages 38\u201340)",
+      "error": "Two-pass extraction produced no rows across all chunks (6 chunk(s); 6 skipped/failed)"
+    },
+    {
+      "fileIndex": 11,
+      "fileName": "264-REUN_SIVANTO 300 SL_12_21_2023_BASE.pdf",
+      "status": "error",
+      "stage": "extraction 12/14 pass 1 (pages 42\u201344)",
+      "error": "Two-pass extraction produced no rows across all chunks (14 chunk(s); 14 skipped/failed)"
+    },
+    {
+      "fileIndex": 12,
+      "fileName": "000524-00659-20241213 (6).pdf",
+      "status": "processing",
+      "stage": "extraction 57/101 pass 1 (pages 96\u201398)"
+    },
+    {
+      "fileIndex": 13,
+      "fileName": "000524-00539-20231106 (3).pdf",
+      "status": "queued"
+    }
+  ]
+}
