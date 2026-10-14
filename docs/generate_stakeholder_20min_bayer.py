@@ -20,6 +20,7 @@ TEMPLATE = Path(
     "Digital Label/Alpha Centauri/2023-08-01_WS1-DataFlow_v03.pptx"
 )
 OUT = Path(__file__).with_name("Use-Summary-Tables-Stakeholder-20min-Bayer.pptx")
+HERO_IMAGE = Path(__file__).with_name("stakeholder-hero-agriculture.jpg")
 
 FOOTER = "/// Use Summary Tables Extractor  ·  Stakeholder briefing  ·  BEAT04090032 ///"
 
@@ -112,6 +113,18 @@ def clear_body(slide, idxs=(14, 16, 17, 18, 19, 20)):
             set_text(shape, " ", size=8)
 
 
+def fill_picture_placeholders(slide, image_path):
+    """Fill title/final 'Insert Picture' slots with a hero image."""
+    if not image_path.exists():
+        raise FileNotFoundError(image_path)
+    for shape in list(slide.shapes):
+        try:
+            if shape.is_placeholder and int(shape.placeholder_format.type) == 18:  # PICTURE
+                shape.insert_picture(str(image_path))
+        except Exception:
+            continue
+
+
 def rect(slide, x, y, w, h, fill, line=None, radius=True):
     shape_type = MSO_SHAPE.ROUNDED_RECTANGLE if radius else MSO_SHAPE.RECTANGLE
     s = slide.shapes.add_shape(shape_type, Inches(x), Inches(y), Inches(w), Inches(h))
@@ -175,12 +188,14 @@ def build():
 
     # ------------------------------------------------------------------ 1 Title
     s = prs.slides.add_slide(layout_by_name(prs, "Title Slide"))
-    set_text(ph(s, 1), "Bayer Life Sciences Regulatory")
-    set_text(ph(s, 0), "Use Summary Tables Extractor")
+    fill_picture_placeholders(s, HERO_IMAGE)
+    set_text(ph(s, 1), "NA ANZ Reg Sci")
+    set_text(ph(s, 0), "EPA Use Summary Tables Extractor")
     set_text(
         ph(s, 13),
-        "Stakeholder briefing  ·  15 min slides + 10 min live demo\n"
-        "Karandeep Singh  ·  BEAT04090032  ·  October 2026",
+        "//////////\n"
+        "Karandeep Singh\n"
+        "October 14, 2026",
     )
     f = ph(s, 16)
     if f:
@@ -196,16 +211,15 @@ def build():
     rows = [
         ("15 min", "Slides", [
             "Why EPA Use Summary Tables were a bottleneck (100+ hrs hand work)",
-            "What we built: generic AI draft, fixed 28-col schema, human review",
-            "How it runs: Agentrix · AI Gateway · Sonnet/Opus · cost & guardrails",
-            "Proof & impact: golden-record accuracy · in production · ARS follow-on",
+            "What we built + 2-agent pipeline (Extract + QC) on Agentrix",
+            "Proof & impact · FAQ (trust, cyber, more EPA schemas)",
         ], BRIGHT_BLUE, PALE_BLUE),
         ("10 min", "Live demo", [
             "Upload a label → run extraction → inspect source on cells",
             "Edit a value → export Excel — the path regulatory users take",
         ], BRIGHT_GREEN, PALE_GREEN),
         ("Q&A", "Discussion", [
-            "Questions after the demo — open floor",
+            "Use the FAQ slides — answers ready for critical questions",
         ], AMBER, PALE_AMBER),
     ]
     y = 2.0
@@ -244,48 +258,51 @@ def build():
     label(s, "Fixed 28-col schema · rows scale with each label", 7.05, 4.9, 5.5, 0.4, 13, INK, False, PP_ALIGN.LEFT)
     set_footer(s)
 
-    # ------------------------------------------------------------------ 4 How it works (visual flow)
+    # ------------------------------------------------------------------ 4 How it works (multi-agent architecture)
     s = prs.slides.add_slide(layout_by_name(prs, "Content"))
     set_text(ph(s, 13), "How it works")
-    set_text(ph(s, 0), "Process & architecture at a glance")
+    set_text(ph(s, 0), "Two AI agents + optional remediation")
     clear_body(s)
 
-    steps = [
-        ("1", "Upload", "PDF label(s)"),
-        ("2", "Extract", "AI + QC"),
-        ("3", "Inspect", "Source trail"),
-        ("4", "Correct", "Edit cells"),
-        ("5", "Export", "Excel"),
-    ]
-    for i, (num, head, body) in enumerate(steps):
+    # Compact user path
+    label(s, "What the user does", 0.55, 1.95, 3.5, 0.28, 11, MUTED, True, PP_ALIGN.LEFT)
+    user_steps = ["Upload PDF", "Run extract", "Inspect source", "Edit if needed", "Excel export"]
+    for i, text in enumerate(user_steps):
         x = 0.55 + i * 2.55
-        rect(s, x, 2.1, 2.25, 1.55, PALE_BLUE if i % 2 == 0 else PALE_GREEN, None, True)
-        rect(s, x + 0.7, 2.25, 0.85, 0.4, DARK_BLUE, DARK_BLUE, True)
-        label(s, num, x + 0.7, 2.28, 0.85, 0.35, 14, WHITE, True)
-        label(s, head, x + 0.1, 2.8, 2.05, 0.35, 15, DARK_BLUE, True)
-        label(s, body, x + 0.1, 3.2, 2.05, 0.3, 12, MUTED, False)
+        rect(s, x, 2.25, 2.35, 0.48, PALE if i % 2 == 0 else PALE_BLUE, None, True)
+        label(s, text, x, 2.32, 2.35, 0.35, 12, DARK_BLUE, True)
         if i < 4:
-            arrow(s, x + 2.25, 2.85, x + 2.45, 2.85, BRIGHT_BLUE)
+            arrow(s, x + 2.35, 2.49, x + 2.5, 2.49, BRIGHT_BLUE)
 
-    # Architecture strip
-    label(s, "Under the hood", 0.55, 3.95, 3, 0.3, 12, MUTED, True, PP_ALIGN.LEFT)
-    arch = [
-        ("Browser UI", PALE),
-        ("Governed relay", PALE_BLUE),
-        ("AI Gateway", PALE_GREEN),
-        ("Claude", PALE_AMBER),
-        ("Human review", PALE_BLUE),
-    ]
-    for i, (text, fill) in enumerate(arch):
-        x = 0.55 + i * 2.55
-        node(s, x, 4.35, 2.25, 0.85, text, fill, DARK_BLUE)
-        if i < 4:
-            arrow(s, x + 2.25, 4.75, x + 2.45, 4.75, MID_BLUE)
-
+    # Two agents + optional remediation (accurate to pipeline)
     label(
         s,
-        "Live on Agentrix  ·  Bayer AI Gateway  ·  Sonnet extract/QC  ·  Opus if High/Critical  ·  Accepted by Regulatory  ·  ARS agent reused the pattern",
-        0.55, 5.45, 12.2, 0.35, 12, MUTED, False, PP_ALIGN.LEFT,
+        "AI side: 2 agents (Extractor + independent QC). Remediation is an optional 3rd stage — not a third standing agent.",
+        0.55, 2.9, 12.2, 0.28, 11, MUTED, True, PP_ALIGN.LEFT,
+    )
+    agents = [
+        ("Agent 1 · Extractor", "Sonnet drafts the\n28-column rows from\nthe label text", PALE_BLUE, BRIGHT_BLUE),
+        ("Agent 2 · QC", "Fresh Sonnet chat\nindependent audit\nClean → Critical", PALE_GREEN, BRIGHT_GREEN),
+        ("Stage 3 · Remediate", "Only if QC is\nHigh / Critical\nOpus · ≤ 2 cycles", PALE_AMBER, AMBER),
+        ("Then · Human", "Not an AI agent\nSource trail · edit\n· export decision", PALE, DARK_BLUE),
+    ]
+    for i, (head, body, fill, accent) in enumerate(agents):
+        x = 0.55 + i * 3.2
+        rect(s, x, 3.2, 3.0, 1.55, fill, fill, True)
+        rect(s, x, 3.2, 0.1, 1.55, accent, accent, False)
+        label(s, head, x + 0.2, 3.3, 2.7, 0.3, 13, DARK_BLUE, True, PP_ALIGN.LEFT)
+        label(s, body, x + 0.2, 3.65, 2.7, 0.95, 12, INK, False, PP_ALIGN.LEFT)
+        if i < 3:
+            arrow(s, x + 3.0, 3.95, x + 3.15, 3.95, MID_BLUE)
+
+    # Runtime / controls strip (no “governed relay” jargon)
+    rect(s, 0.55, 4.95, 12.2, 1.15, PALE_BLUE, PALE_BLUE, True)
+    label(s, "Runtime path", 0.75, 5.05, 11.8, 0.28, 12, DARK_BLUE, True, PP_ALIGN.LEFT)
+    label(
+        s,
+        "Browser → Agentrix server → Bayer AI Gateway (Entra) → Claude → back to UI\n"
+        "Kill switch · daily budget · rate limits · secrets stay server-side  ·  Accepted by Regulatory · ARS reused the pattern",
+        0.75, 5.4, 11.8, 0.55, 12, INK, False, PP_ALIGN.LEFT,
     )
     set_footer(s)
 
@@ -328,15 +345,102 @@ def build():
         label(s, text, x + 0.08, 4.7, 2.24, 0.55, 12, WHITE, True)
     set_footer(s)
 
-    # ------------------------------------------------------------------ 6 Demo bridge
+    # ------------------------------------------------------------------ 6 FAQ — accuracy, review, provenance
+    s = prs.slides.add_slide(layout_by_name(prs, "Content"))
+    set_text(ph(s, 13), "FAQ for first-time reviewers")
+    set_text(ph(s, 0), "Accuracy, proofreading & human checks")
+    clear_body(s)
+
+    faqs_a = [
+        ("Is the AI making regulatory decisions?",
+         "No. It drafts rows. A human decides what is good enough. No EPA submit."),
+        ("How accurate is it?",
+         "~88% field-level on 5 golden-record labels — a strong draft, not skip-review."),
+        ("Does it invent values?",
+         "No. Silent label → NS. Not applicable → NA. ◆ = documented derivation rule."),
+        ("How do I proofread / provenance?",
+         "▸ expands page + source text. Filter Low confidence. Edit cells. Then Excel."),
+        ("Do humans still check every table?",
+         "Yes — AI draft → spot-check → human export. Value is speed + traceability."),
+        ("What about the 3 review stations?",
+         "On before export: document snapshot → extraction sanity → high-risk fields. Yes advances; No pauses to edit."),
+    ]
+    y = 2.0
+    for q, a in faqs_a:
+        label(s, "Q  " + q, 0.6, y, 12.1, 0.28, 12, DARK_BLUE, True, PP_ALIGN.LEFT)
+        label(s, "A  " + a, 0.6, y + 0.28, 12.1, 0.32, 12, INK, False, PP_ALIGN.LEFT)
+        y += 0.62
+    set_footer(s)
+
+    # ------------------------------------------------------------------ 7 FAQ — cost, compliance, cyber
+    s = prs.slides.add_slide(layout_by_name(prs, "Content"))
+    set_text(ph(s, 13), "FAQ for first-time reviewers")
+    set_text(ph(s, 0), "Cost, compliance & cybersecurity")
+    clear_body(s)
+
+    faqs_b = [
+        ("How much does a run cost?",
+         "~$0.50–$0.75 per label on a normal path. Hard labels (Opus remediation) cost more."),
+        ("How do you stop runaway spend?",
+         "App daily budget (default $100/day), rate limit, kill switch, bounded remediation cycles."),
+        ("Is this validated / can we submit AI output as-is?",
+         "Treat as draft aid for submission prep. Human remains accountable for the table used."),
+        ("Does label data leave Bayer?",
+         "Calls go Browser → our relay → Bayer AI Gateway (Entra) → approved Claude. No model secret in the browser."),
+        ("Cyber / prompt injection / exfiltration?",
+         "Label text treated as data; injection phrases flagged; CSP connect-src self; human Apply for chat edits."),
+        ("Audit trail — do you store raw labels?",
+         "Audit is metadata only (time, status, tokens/cost, QC severity) — not raw label text."),
+        ("Why use this if we still check?",
+         "Checking a draft with page citations beats 100+ hours building from a blank sheet."),
+    ]
+    y = 1.95
+    for q, a in faqs_b:
+        label(s, "Q  " + q, 0.6, y, 12.1, 0.26, 12, DARK_BLUE, True, PP_ALIGN.LEFT)
+        label(s, "A  " + a, 0.6, y + 0.26, 12.1, 0.30, 11, INK, False, PP_ALIGN.LEFT)
+        y += 0.56
+    set_footer(s)
+
+    # ------------------------------------------------------------------ 8 FAQ — more EPA schemas
+    s = prs.slides.add_slide(layout_by_name(prs, "Content"))
+    set_text(ph(s, 13), "FAQ — future flexibility")
+    set_text(ph(s, 0), "Can we support other EPA output schemas?")
+    clear_body(s)
+
+    label(s, "Short answer: Yes — same pipeline, new schema pack. Not a free toggle.", 0.6, 2.0, 12.1, 0.35, 14, DARK_BLUE, True, PP_ALIGN.LEFT)
+
+    # Three difficulty cards
+    cards = [
+        ("Medium", "Close cousin of UST\n(rename / add fields,\nsame row meaning)", BRIGHT_GREEN, PALE_GREEN),
+        ("Hard", "Different EPA table\n(new row grain, units,\nnew QC + goldens)", AMBER, PALE_AMBER),
+        ("Not advisable", "“Any schema” with\nno SME rules —\naccuracy collapses", RED, PALE_RED),
+    ]
+    for i, (head, body, accent, fill) in enumerate(cards):
+        x = 0.6 + i * 4.2
+        rect(s, x, 2.5, 4.0, 1.85, fill, fill, True)
+        label(s, head, x + 0.15, 2.65, 3.7, 0.35, 16, accent, True, PP_ALIGN.LEFT)
+        label(s, body, x + 0.15, 3.15, 3.7, 1.0, 13, INK, False, PP_ALIGN.LEFT)
+
+    label(s, "Architecture", 0.6, 4.55, 3, 0.28, 12, MUTED, True, PP_ALIGN.LEFT)
+    label(
+        s,
+        "Label → choose Schema Pack (columns + rules + QC + goldens) → Extractor + QC agents → same review UI → Excel\n"
+        "Agentrix · AI Gateway stay the same. Cost of a run stays similar; main cost is SME + build time.",
+        0.6, 4.85, 12.1, 0.7, 12, INK, False, PP_ALIGN.LEFT,
+    )
+    set_footer(s)
+
+    # ------------------------------------------------------------------ 9 Demo bridge
     s = prs.slides.add_slide(layout_by_name(prs, "Final Slide"))
+    fill_picture_placeholders(s, HERO_IMAGE)
     set_text(ph(s, 1), "Next — live demo (~10 min)")
     set_text(ph(s, 0), "Upload · Extract · Review · Excel")
     set_text(
         ph(s, 13),
+        "//////////\n"
         "One label in → reviewable table out, with source on every cell\n"
-        "Questions after the demo\n"
-        "Karandeep Singh  ·  BEAT04090032  ·  Agentrix + Bayer AI Gateway",
+        "Karandeep Singh\n"
+        "Agentrix + Bayer AI Gateway",
     )
     f = ph(s, 11) or ph(s, 16)
     if f:
@@ -344,7 +448,7 @@ def build():
 
     prs.save(str(OUT))
     print(f"Wrote {OUT}")
-    print(f"Slides: {len(prs.slides)}  (~15 min visual talk + 10 min demo)")
+    print(f"Slides: {len(prs.slides)}  (incl. FAQ slides + demo handoff)")
 
 
 if __name__ == "__main__":
