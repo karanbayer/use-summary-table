@@ -48,10 +48,16 @@ const REMEDIATION_MAX_CYCLES = 1; // pilot: one Opus patch cycle max (was 2)
 // /v1/models on global.ai-gateway.int.bayer.ai).
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
-/** Match interactive app pipeline for large / master labels (2026-10-14d). */
+/** Match interactive app pipeline for large / master labels (2026-10-14e). */
 const EXTRACT_CHUNK_CHARS_LARGE = 35000;
+const EXTRACT_CHUNK_CHARS_MEGA = 22000;
+const MEGA_LABEL_MIN_PAGES = 100;
 const EXTRACT_FRONT_MATTER_MAX_PAGES = 8;
 const DETAIL_SKELETON_BATCH = 6;
+const DETAIL_SKELETON_BATCH_MEGA = 4;
+const CHUNK_EXTRACT_MAX_ATTEMPTS = 3;
+const INTER_CHUNK_PAUSE_MS = 1500;
+const INTER_CHUNK_PAUSE_MEGA_MS = 3500;
 const FORCE_TWO_PASS_MIN_PAGES = 20;
 const QC_MAX_ATTEMPTS = 3;
 const QC_MAX_CHARS = 150000;
@@ -707,6 +713,24 @@ function buildPageWindowChunks(pages, frontMatter, budget) {
   return chunks;
 }
 
+function chunkBudgetForPages(pageCount) {
+  if (pageCount >= MEGA_LABEL_MIN_PAGES) return EXTRACT_CHUNK_CHARS_MEGA;
+  return EXTRACT_CHUNK_CHARS_LARGE;
+}
+
+function detailBatchSizeForPages(pageCount) {
+  return pageCount >= MEGA_LABEL_MIN_PAGES ? DETAIL_SKELETON_BATCH_MEGA : DETAIL_SKELETON_BATCH;
+}
+
+function interChunkPauseForPages(pageCount) {
+  return pageCount >= MEGA_LABEL_MIN_PAGES ? INTER_CHUNK_PAUSE_MEGA_MS : INTER_CHUNK_PAUSE_MS;
+}
+
+function isRetryablePipelineError(err) {
+  const msg = String(err && err.message || err || "");
+  return /network|stream ended|stream failed|stream dropped|incomplete tool|truncated|502|503|504|524|429|econnreset|etimedout|failed to fetch/i.test(msg);
+}
+
 function buildExtractionChunks(pageMarkedText) {
   const pages = parseMarkedPages(pageMarkedText);
   if (!pages.length) return [{ id: "full", text: pageMarkedText }];
@@ -715,8 +739,9 @@ function buildExtractionChunks(pageMarkedText) {
   if (pages.length < FORCE_TWO_PASS_MIN_PAGES && pageMarkedText.length <= EXTRACT_CHUNK_CHARS_LARGE) {
     return [{ id: "full", text: pageMarkedText }];
   }
-  console.log(`large label → chunk budget ${EXTRACT_CHUNK_CHARS_LARGE.toLocaleString()} chars (pages ${pages.length})`);
-  return buildPageWindowChunks(pages, frontMatter, EXTRACT_CHUNK_CHARS_LARGE);
+  const budget = chunkBudgetForPages(pages.length);
+  console.log(`large label → chunk budget ${budget.toLocaleString()} chars (pages ${pages.length})`);
+  return buildPageWindowChunks(pages, frontMatter, budget);
 }
 
 function skeletonsLackUses(skeletons) {
@@ -761,7 +786,9 @@ function mergeSkeletonsIntoRows(skeletons, rawRows) {
   });
 }
 
-async function extractChunkTwoPass(env, jobId, fileIndex, doc, chunk, chunkIndex, chunkCount, systemBlocks, tools, usageTotals) {
+async function extractChunkTwoPass(
+  env, jobId, fileIndex, doc, chunk, chunkIndex, chunkCount, systemBlocks, tools, usageTotals, pageCount = 0
+) {
   const label = chunk.id;
   const chunkPreface = chunkCount === 1
     ? ""
@@ -792,9 +819,10 @@ async function extractChunkTwoPass(env, jobId, fileIndex, doc, chunk, chunkIndex
   }
   console.log(`${label}: pass 1 → ${skeletons.length} skeleton(s)`);
 
+  const batchSize = detailBatchSizeForPages(pageCount || FORCE_TWO_PASS_MIN_PAGES);
   const batches = [];
-  for (let i = 0; i < skeletons.length; i += DETAIL_SKELETON_BATCH) {
-    batches.push(skeletons.slice(i, i + DETAIL_SKELETON_BATCH));
+  for (let i = 0; i < skeletons.length; i += batchSize) {
+    batches.push(skeletons.slice(i, i + batchSize));
   }
   const allMerged = [];
   for (let b = 0; b < batches.length; b++) {
@@ -810,21 +838,36 @@ async function extractChunkTwoPass(env, jobId, fileIndex, doc, chunk, chunkIndex
       "Pass-1 skeletons for this batch (JSON):",
       JSON.stringify(batch)
     ].join("\n");
-    try {
-      const detMessages = [{ role: "user", content: buildDocMessageBlocks(doc, chunk.text, detailNote) }];
-      const detTurn = await callAnthropic(env, detMessages, systemBlocks, tools, "emit_use_summary_rows");
-      addUsage(usageTotals, detTurn.data.usage);
-      const merged = mergeSkeletonsIntoRows(batch, detTurn.toolUse.input?.rows ?? []);
-      if (isMostlyEmptyNsRows(merged)) {
-        console.warn(`pass 2 empty for "${batchLabel}" (continuing)`);
-        continue;
+    let ok = false;
+    for (let attempt = 1; attempt <= CHUNK_EXTRACT_MAX_ATTEMPTS; attempt++) {
+      try {
+        const detMessages = [{ role: "user", content: buildDocMessageBlocks(doc, chunk.text, detailNote) }];
+        const detTurn = await callAnthropic(env, detMessages, systemBlocks, tools, "emit_use_summary_rows");
+        addUsage(usageTotals, detTurn.data.usage);
+        const merged = mergeSkeletonsIntoRows(batch, detTurn.toolUse.input?.rows ?? []);
+        if (isMostlyEmptyNsRows(merged)) {
+          console.warn(`pass 2 empty for "${batchLabel}" (continuing)`);
+          ok = true;
+          break;
+        }
+        allMerged.push(...merged);
+        console.log(`${batchLabel}: pass 2 → ${merged.length} row(s)`);
+        ok = true;
+        break;
+      } catch (err) {
+        if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;
+        if (isRetryablePipelineError(err) && attempt < CHUNK_EXTRACT_MAX_ATTEMPTS) {
+          console.warn(`pass 2 failed for "${batchLabel}" (attempt ${attempt}/${CHUNK_EXTRACT_MAX_ATTEMPTS}): ${err.message} — retrying…`);
+          await sleep(RETRY_BASE_DELAY_MS * attempt * 2);
+          continue;
+        }
+        console.warn(`pass 2 failed for "${batchLabel}" — ${err.message} (continuing)`);
+        ok = true;
+        break;
       }
-      allMerged.push(...merged);
-      console.log(`${batchLabel}: pass 2 → ${merged.length} row(s)`);
-    } catch (err) {
-      if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;
-      console.warn(`pass 2 failed for "${batchLabel}" — ${err.message} (continuing)`);
     }
+    if (!ok) console.warn(`pass 2 gave up on "${batchLabel}"`);
+    if (b + 1 < batches.length) await sleep(interChunkPauseForPages(pageCount));
   }
   return allMerged;
 }
@@ -992,26 +1035,40 @@ export async function extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText)
   const usageTotals = { inputTokens: 0, outputTokens: 0, estCostUsd: 0 };
   const chunks = buildExtractionChunks(pageMarkedText);
   const allRawRows = [];
+  const pageCount = parseMarkedPages(pageMarkedText).length;
 
-  console.log(`${doc.fileName} — stage 1/3 — two-pass extraction (${chunks.length} chunk(s))…`);
+  console.log(`${doc.fileName} — stage 1/3 — two-pass extraction (${chunks.length} chunk(s), pipeline 2026-10-14e)…`);
   await reportStage(env, jobId, fileIndex, `extraction (stage 1/3, ${chunks.length} chunk(s))`);
   let skipped = 0;
   for (let i = 0; i < chunks.length; i++) {
-    try {
-      const merged = await extractChunkTwoPass(
-        env, jobId, fileIndex, doc, chunks[i], i, chunks.length, systemBlocks, tools, usageTotals
-      );
-      if (!merged.length) skipped++;
-      else allRawRows.push(...merged);
-    } catch (err) {
-      if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;
-      if (chunks.length > 1) {
-        skipped++;
-        console.warn(`chunk "${chunks[i].id}" failed — ${err.message} (continuing)`);
-        continue;
+    let done = false;
+    for (let attempt = 1; attempt <= CHUNK_EXTRACT_MAX_ATTEMPTS; attempt++) {
+      try {
+        const merged = await extractChunkTwoPass(
+          env, jobId, fileIndex, doc, chunks[i], i, chunks.length, systemBlocks, tools, usageTotals, pageCount
+        );
+        if (!merged.length) skipped++;
+        else allRawRows.push(...merged);
+        done = true;
+        break;
+      } catch (err) {
+        if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;
+        if (isRetryablePipelineError(err) && attempt < CHUNK_EXTRACT_MAX_ATTEMPTS) {
+          console.warn(`chunk "${chunks[i].id}" failed (attempt ${attempt}/${CHUNK_EXTRACT_MAX_ATTEMPTS}): ${err.message} — retrying…`);
+          await sleep(RETRY_BASE_DELAY_MS * attempt * 2);
+          continue;
+        }
+        if (chunks.length > 1) {
+          skipped++;
+          console.warn(`chunk "${chunks[i].id}" failed — ${err.message} (continuing)`);
+          done = true;
+          break;
+        }
+        throw err;
       }
-      throw err;
     }
+    if (!done && chunks.length > 1) skipped++;
+    if (i + 1 < chunks.length) await sleep(interChunkPauseForPages(pageCount));
   }
   if (skipped) console.warn(`skipped ${skipped} barren/failed chunk(s); kept rows from the rest`);
   if (!allRawRows.length) {

@@ -4372,7 +4372,7 @@ const REMEDIATION_MAX_CYCLES = 1;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-10-14d";
+const PIPELINE_BUILD = "2026-10-14e";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -4393,9 +4393,18 @@ const QC_MAX_CHARS_LARGE = 80000;
 // under stream limits (85k windows produced 50+ skeletons and dropped).
 const EXTRACT_CHUNK_CHARS = 85000;
 const EXTRACT_CHUNK_CHARS_LARGE = 35000;
+/** 100p+ glyphosate-class masters: smaller windows + longer cooldown between calls. */
+const EXTRACT_CHUNK_CHARS_MEGA = 22000;
+const MEGA_LABEL_MIN_PAGES = 100;
 const EXTRACT_FRONT_MATTER_MAX_PAGES = 8;
 /** Cap skeletons per Pass-2 call; denser windows are filled in batches. */
 const DETAIL_SKELETON_BATCH = 6;
+/** Mega labels use smaller Pass-2 batches — long streams die after ~1h of calls. */
+const DETAIL_SKELETON_BATCH_MEGA = 4;
+/** Extra attempts for a whole chunk / Pass-2 batch after callAnthropic retries. */
+const CHUNK_EXTRACT_MAX_ATTEMPTS = 3;
+const INTER_CHUNK_PAUSE_MS = 1500;
+const INTER_CHUNK_PAUSE_MEGA_MS = 3500;
 /** Skip gap units when section detectors already cover most of the body. */
 const SKIP_GAP_UNITS_COVERAGE = 0.80;
 /**
@@ -4803,6 +4812,8 @@ function buildDocMessageBlocks(doc, pageMarkedText, stageInstructionText) {
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 524]);
 const MAX_ATTEMPTS = 5;
 const RETRY_BASE_DELAY_MS = 2000;
+/** Longer cushion after mid-file stream deaths on 100p+ masters. */
+const RETRY_STREAM_DELAY_MS = 5000;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -4810,7 +4821,10 @@ function sleep(ms) {
 
 function isRetryableNetworkError(err) {
   const msg = String(err && err.message || err || "");
-  return /network connection lost|failed to fetch|networkerror|load failed|aborted|econnreset|econnrefused|etimedout/i.test(msg);
+  // Include relay/Gateway soft failures — "stream ended without a result" was
+  // previously NOT matched, so mega-label chunks died on the first drop with
+  // no retry (seen on 524-659 ~page 61 after ~1h of successful windows).
+  return /network connection lost|failed to fetch|networkerror|load failed|aborted|econnreset|econnrefused|etimedout|stream ended without a result|relay stream|ai gateway stream|incomplete tool json|stream may have been truncated|stream dropped|gateway stream failed|empty result|502|503|504|524|429/i.test(msg);
 }
 
 // Reassemble Anthropic Messages SSE (from /api/extract streaming relay) into
@@ -5026,7 +5040,10 @@ async function callAnthropic(messages, systemBlocks, tools, toolChoiceName, mode
       lastErr = err;
       if (!isRetryableNetworkError(err) || attempt === maxAttempts) throw err;
       logEl.textContent += `   ⚠ stream dropped (attempt ${attempt}/${maxAttempts}): ${err.message} — retrying…\n`;
-      await sleep(RETRY_BASE_DELAY_MS * attempt);
+      const delay = /stream ended|relay stream|truncated|incomplete tool/i.test(String(err.message || ""))
+        ? RETRY_STREAM_DELAY_MS * attempt
+        : RETRY_BASE_DELAY_MS * attempt;
+      await sleep(delay);
     }
   }
   throw lastErr || new Error("AI Gateway request failed after retries");
@@ -5369,12 +5386,13 @@ async function extractChunkTwoPass(doc, chunk, chunkIndex, chunkCount, systemBlo
 
   // Dense master-label windows can emit 50+ skeletons; one Pass-2 stream for
   // all of them often dies with "Network connection lost". Fill in batches.
+  const batchSize = detailBatchSizeForDoc(doc);
   const batches = [];
-  for (let i = 0; i < skeletons.length; i += DETAIL_SKELETON_BATCH) {
-    batches.push(skeletons.slice(i, i + DETAIL_SKELETON_BATCH));
+  for (let i = 0; i < skeletons.length; i += batchSize) {
+    batches.push(skeletons.slice(i, i + batchSize));
   }
   if (batches.length > 1) {
-    logEl.textContent += `     pass 2 — ${skeletons.length} skeletons → ${batches.length} detail batch(es) (≤${DETAIL_SKELETON_BATCH} each)\n`;
+    logEl.textContent += `     pass 2 — ${skeletons.length} skeletons → ${batches.length} detail batch(es) (≤${batchSize} each)\n`;
   }
 
   const allMerged = [];
@@ -5393,30 +5411,47 @@ async function extractChunkTwoPass(doc, chunk, chunkIndex, chunkCount, systemBlo
       JSON.stringify(batch)
     ].join("\n");
 
-    try {
-      const detTurn = await runDetailPass(
-        doc, chunk.text, systemBlocks, tools, pState, batch, detailNote
-      );
-      const merged = mergeSkeletonsIntoRows(batch, detTurn.rawRows);
-      if (isMostlyEmptyNsRows(merged)) {
-        logEl.textContent += `     ⚠ pass 2 — empty/NS-only for "${batchLabel}"`
-          + (batches.length > 1 || chunkCount > 1 ? " (continuing)\n" : "\n");
-        if (batches.length === 1 && chunkCount === 1) {
-          throw new Error(`Pass 2 returned empty or NS-only rows for chunk "${label}"`);
+    let batchOk = false;
+    for (let attempt = 1; attempt <= CHUNK_EXTRACT_MAX_ATTEMPTS; attempt++) {
+      try {
+        const detTurn = await runDetailPass(
+          doc, chunk.text, systemBlocks, tools, pState, batch, detailNote
+        );
+        const merged = mergeSkeletonsIntoRows(batch, detTurn.rawRows);
+        if (isMostlyEmptyNsRows(merged)) {
+          logEl.textContent += `     ⚠ pass 2 — empty/NS-only for "${batchLabel}"`
+            + (batches.length > 1 || chunkCount > 1 ? " (continuing)\n" : "\n");
+          if (batches.length === 1 && chunkCount === 1) {
+            throw new Error(`Pass 2 returned empty or NS-only rows for chunk "${label}"`);
+          }
+          batchOk = true; // empty is a soft skip, not a stream failure
+          break;
         }
-        continue;
+        allMerged.push(...merged);
+        logEl.textContent += `     pass 2 → ${merged.length} full row(s)`
+          + (batches.length > 1 ? ` (${batchLabel})` : "") + `\n`;
+        batchOk = true;
+        break;
+      } catch (err) {
+        const retryable = isRetryableNetworkError(err) && attempt < CHUNK_EXTRACT_MAX_ATTEMPTS;
+        if (retryable) {
+          logEl.textContent += `     ⚠ pass 2 failed for "${batchLabel}" (attempt ${attempt}/${CHUNK_EXTRACT_MAX_ATTEMPTS}) — ${err.message} — retrying…\n`;
+          await sleep(RETRY_STREAM_DELAY_MS * attempt);
+          continue;
+        }
+        if (batches.length > 1 || chunkCount > 1) {
+          logEl.textContent += `     ⚠ pass 2 failed for "${batchLabel}" — ${err.message} (continuing)\n`;
+          console.warn(`[Extractor] detail batch failed (${batchLabel}):`, err);
+          batchOk = true; // don't throw; continue other batches
+          break;
+        }
+        throw err;
       }
-      allMerged.push(...merged);
-      logEl.textContent += `     pass 2 → ${merged.length} full row(s)`
-        + (batches.length > 1 ? ` (${batchLabel})` : "") + `\n`;
-    } catch (err) {
-      if (batches.length > 1 || chunkCount > 1) {
-        logEl.textContent += `     ⚠ pass 2 failed for "${batchLabel}" — ${err.message} (continuing)\n`;
-        console.warn(`[Extractor] detail batch failed (${batchLabel}):`, err);
-        continue;
-      }
-      throw err;
     }
+    if (!batchOk && !(batches.length > 1 || chunkCount > 1)) {
+      throw new Error(`Pass 2 failed for chunk "${label}"`);
+    }
+    if (b + 1 < batches.length) await sleep(interChunkPauseMs(doc));
   }
 
   if (!allMerged.length) {
@@ -5591,9 +5626,21 @@ function isLargeLabelForExtract(doc, sectionCount) {
 }
 
 function chunkCharBudgetForDoc(doc, sectionCount) {
+  const pages = doc.numPages || (doc.pages && doc.pages.length) || 0;
+  if (pages >= MEGA_LABEL_MIN_PAGES) return EXTRACT_CHUNK_CHARS_MEGA;
   return isLargeLabelForExtract(doc, sectionCount)
     ? EXTRACT_CHUNK_CHARS_LARGE
     : EXTRACT_CHUNK_CHARS;
+}
+
+function detailBatchSizeForDoc(doc) {
+  const pages = doc.numPages || (doc.pages && doc.pages.length) || 0;
+  return pages >= MEGA_LABEL_MIN_PAGES ? DETAIL_SKELETON_BATCH_MEGA : DETAIL_SKELETON_BATCH;
+}
+
+function interChunkPauseMs(doc) {
+  const pages = doc.numPages || (doc.pages && doc.pages.length) || 0;
+  return pages >= MEGA_LABEL_MIN_PAGES ? INTER_CHUNK_PAUSE_MEGA_MS : INTER_CHUNK_PAUSE_MS;
 }
 
 /**
@@ -6046,22 +6093,38 @@ async function extractWithLLM(doc, pState) {
       const chunk = chunks[i];
       updateAiProgress(pState, `extraction chunk ${i + 1}/${chunks.length}`);
       logEl.textContent += `   · ${chunk.id}…\n`;
-      try {
-        const merged = await extractChunkTwoPass(
-          doc, chunk, i, chunks.length, systemBlocks, tools, pState
-        );
-        if (!merged.length) skippedChunks++;
-        else allRawRows.push(...merged);
-      } catch (err) {
-        // Multi-chunk master labels: one bad window must not kill the file.
-        if (chunks.length > 1) {
-          skippedChunks++;
-          logEl.textContent += `     ⚠ chunk "${chunk.id}" failed — ${err.message} (continuing)\n`;
-          console.warn(`[Extractor] chunk failed (${chunk.id}):`, err);
-          continue;
+      let chunkDone = false;
+      for (let attempt = 1; attempt <= CHUNK_EXTRACT_MAX_ATTEMPTS; attempt++) {
+        try {
+          const merged = await extractChunkTwoPass(
+            doc, chunk, i, chunks.length, systemBlocks, tools, pState
+          );
+          if (!merged.length) skippedChunks++;
+          else allRawRows.push(...merged);
+          chunkDone = true;
+          break;
+        } catch (err) {
+          const retryable = isRetryableNetworkError(err) && attempt < CHUNK_EXTRACT_MAX_ATTEMPTS;
+          if (retryable) {
+            logEl.textContent += `     ⚠ chunk "${chunk.id}" failed (attempt ${attempt}/${CHUNK_EXTRACT_MAX_ATTEMPTS}) — ${err.message} — retrying…\n`;
+            await sleep(RETRY_STREAM_DELAY_MS * attempt);
+            continue;
+          }
+          // Multi-chunk master labels: one bad window must not kill the file.
+          if (chunks.length > 1) {
+            skippedChunks++;
+            logEl.textContent += `     ⚠ chunk "${chunk.id}" failed — ${err.message} (continuing)\n`;
+            console.warn(`[Extractor] chunk failed (${chunk.id}):`, err);
+            chunkDone = true;
+            break;
+          }
+          throw err;
         }
-        throw err;
       }
+      if (!chunkDone && chunks.length === 1) {
+        throw new Error(`Chunk "${chunk.id}" failed after retries`);
+      }
+      if (i + 1 < chunks.length) await sleep(interChunkPauseMs(doc));
     }
     if (skippedChunks) {
       logEl.textContent += `   ⚠ skipped ${skippedChunks} barren/failed chunk(s); kept rows from the rest\n`;

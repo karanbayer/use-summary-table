@@ -404,6 +404,11 @@ Findings recorded in `docs/CODE-REVIEW.md`.
     Done when: a 100+ page master label with low use-section coverage no longer aborts the whole file on the first barren page-window chunk (PPE/mixing/drift); page windows start at crop/use-rate content when detectable; empty Pass-1 skeletons skip that chunk and continue; dense Pass-2 skeleton sets are batched so streams do not die on 50+ row fills; if QC fails after a successful extract, draft rows are kept and QC is retried on its own (not a full re-extract); pipeline log shows `2026-10-14d`.
     Note: done in `app/index.html` (PIPELINE_BUILD `2026-10-14d`). Flow is extract-once → QC up to 3 times (shrinking context) → keep rows with QC Unavailable only if all QC attempts fail. Not a model change — orchestration so the QC agent still gets to work without wiping Pass-1/2.
 
+[x] Task 60: Retry relay stream drops on mega labels (100p+)
+    Satisfies: R3, R4
+    Done when: "AI relay stream ended without a result" is treated as retryable; 100p+ labels use 22k char windows and Pass-2 batches of 4; chunk/Pass-2 failures retry with backoff before skipping; Worker pipeline matches; log shows `2026-10-14e`.
+    Note: triggered by 524-659 interactive run — first ~93 rows OK, then cascade of non-retried stream drops from pages 61+. Fix in `app/index.html` + `worker/src/pipeline.js`.
+
 
 
 
