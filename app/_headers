@@ -4,7 +4,15 @@
   X-Frame-Options: DENY
   Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'
 
+# Root URL is served as index.html but does not match /*.html — keep it uncached
+# so deploys (e.g. re-enabling review stations) are not stuck behind max-age=3600.
+/
+  Cache-Control: public, max-age=0, must-revalidate
+
 /*.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+/index.html
   Cache-Control: public, max-age=0, must-revalidate
 
 /vendor/*
