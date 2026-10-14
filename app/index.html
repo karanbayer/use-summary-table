@@ -4372,7 +4372,7 @@ const REMEDIATION_MAX_CYCLES = 1;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-10-14c";
+const PIPELINE_BUILD = "2026-10-14d";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -4380,6 +4380,11 @@ const INTERACTIVE_WARN_PAGES = 40;
 // Full-table re-emit during remediation can drop the connection on large
 // labels; we still attempt Opus correction and keep extraction rows if it fails.
 const REMEDIATION_ROW_SKIP_THRESHOLD = Infinity;
+/** QC-only retries after a successful extract (never re-run Pass-1/2). */
+const QC_MAX_ATTEMPTS = 3;
+const QC_MAX_CHARS = 150000;
+/** Large labels start QC with a smaller label slice to reduce Gateway 503s. */
+const QC_MAX_CHARS_LARGE = 80000;
 
 // Chunked extraction — keep each Gateway call under this character budget.
 // Front-matter (product identity pages) is prepended to every body chunk.
@@ -5820,6 +5825,41 @@ async function runQcTurn(rawRows, doc, pageMarkedText, systemBlocks, tools, pSta
   return { messages, qcReport: toolUse.input || { overall: "Clean", defects: [] }, lastToolUseId: toolUse.id };
 }
 
+/**
+ * Retry QC only — extraction rows stay fixed. On each failure, shrink the
+ * label context slightly so Gateway overload / long streams are less likely.
+ */
+async function runQcTurnWithRetries(rawRows, doc, pageMarkedText, systemBlocks, tools, pState) {
+  const large = (doc.numPages || (doc.pages && doc.pages.length) || 0) >= FORCE_TWO_PASS_MIN_PAGES;
+  let maxChars = large ? QC_MAX_CHARS_LARGE : QC_MAX_CHARS;
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= QC_MAX_ATTEMPTS; attempt++) {
+    let qcLabelText = pageMarkedText;
+    if (qcLabelText.length > maxChars) {
+      qcLabelText = qcLabelText.slice(0, maxChars)
+        + `\n\n[Label truncated for QC context at ${maxChars.toLocaleString()} characters]`;
+      if (attempt === 1 || attempt === QC_MAX_ATTEMPTS) {
+        logEl.textContent += `   ⚠ QC context truncated to ${maxChars.toLocaleString()} characters`
+          + (attempt > 1 ? ` (retry ${attempt})` : "") + `\n`;
+      }
+    }
+    try {
+      if (attempt > 1) {
+        logEl.textContent += `   ↻ QC retry ${attempt}/${QC_MAX_ATTEMPTS}`
+          + ` — keeping ${rawRows.length} extraction row(s); not re-running Pass-1/2…\n`;
+        await sleep(RETRY_BASE_DELAY_MS * attempt);
+      }
+      return await runQcTurn(rawRows, doc, qcLabelText, systemBlocks, tools, pState);
+    } catch (err) {
+      lastErr = err;
+      logEl.textContent += `   ⚠ QC attempt ${attempt}/${QC_MAX_ATTEMPTS} failed — ${err.message}\n`;
+      maxChars = Math.max(40000, Math.floor(maxChars * 0.65));
+    }
+  }
+  throw lastErr || new Error("QC failed after retries");
+}
+
 // Stage 3 — remediation runs ONLY for Critical/High QC. Clean, Low, and
 // Medium never enter the loop (no Opus patch calls). Informational defects
 // still surface in the UI via the QC report.
@@ -6037,24 +6077,17 @@ async function extractWithLLM(doc, pState) {
   }
   advanceAiProgress(pState, 1, "extraction complete (stage 1/3)");
 
-  // QC still sees as much label text as fits; output is small so truncation risk is lower.
-  const QC_MAX_CHARS = 150000;
-  let qcLabelText = pageMarkedText;
-  if (qcLabelText.length > QC_MAX_CHARS) {
-    qcLabelText = qcLabelText.slice(0, QC_MAX_CHARS)
-      + `\n\n[Label truncated for QC context at ${QC_MAX_CHARS.toLocaleString()} characters]`;
-    logEl.textContent += `   ⚠ QC context truncated to ${QC_MAX_CHARS.toLocaleString()} characters\n`;
-  }
-
-  // Master labels can spend 30+ Gateway calls on extract; if QC then 503s /
-  // drops, do NOT throw away the draft rows — that caused a full-file retry
-  // which wiped 90 successful rows on Roundup-class runs (2026-10-14b).
+  // Extract once → QC with its own retries → keep draft if QC still fails.
+  // Never re-run Pass-1/2 just because QC 503'd (that wiped 90 rows before).
   logEl.textContent += `   stage 2/3 — independent QC review (Sonnet)…\n`;
   let qc;
   try {
-    qc = await runQcTurn(allRawRows, doc, qcLabelText, systemBlocks, tools, pState);
+    qc = await runQcTurnWithRetries(
+      allRawRows, doc, pageMarkedText, systemBlocks, tools, pState
+    );
   } catch (err) {
-    logEl.textContent += `   ⚠ QC failed — ${err.message}. Keeping ${allRawRows.length} extraction row(s); QC marked Unavailable.\n`;
+    logEl.textContent += `   ⚠ QC failed after ${QC_MAX_ATTEMPTS} attempt(s) — ${err.message}.`
+      + ` Keeping ${allRawRows.length} extraction row(s); QC marked Unavailable.\n`;
     advanceAiProgress(pState, 1, "QC failed (stage 2/3)");
     qc = {
       messages: [],
@@ -6063,7 +6096,7 @@ async function extractWithLLM(doc, pState) {
         defects: [{
           severity: "Medium",
           code: "QC-UNAVAILABLE",
-          message: `Independent QC did not complete: ${err.message}`,
+          message: `Independent QC did not complete after ${QC_MAX_ATTEMPTS} attempts: ${err.message}`,
           rows: []
         }]
       },

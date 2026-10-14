@@ -401,8 +401,8 @@ Findings recorded in `docs/CODE-REVIEW.md`.
 
 [x] Task 59: Harden multi-chunk extraction on large / master labels
     Satisfies: R3, R4
-    Done when: a 100+ page master label with low use-section coverage no longer aborts the whole file on the first barren page-window chunk (PPE/mixing/drift); page windows start at crop/use-rate content when detectable; empty Pass-1 skeletons skip that chunk and continue; dense Pass-2 skeleton sets are batched so streams do not die on 50+ row fills; if QC fails after a successful extract, draft rows are kept (QC Unavailable) instead of a full-file retry that wipes them; pipeline log shows `2026-10-14c`.
-    Note: done in `app/index.html` (PIPELINE_BUILD `2026-10-14c`). Live Roundup-class run under `2026-10-14b` produced **90 rows** then lost them when QC 503'd and attempt 2/2 re-extracted from scratch. `2026-10-14c` keeps those rows, uses 35k large chunks and Pass-2 batches of ≤6.
+    Done when: a 100+ page master label with low use-section coverage no longer aborts the whole file on the first barren page-window chunk (PPE/mixing/drift); page windows start at crop/use-rate content when detectable; empty Pass-1 skeletons skip that chunk and continue; dense Pass-2 skeleton sets are batched so streams do not die on 50+ row fills; if QC fails after a successful extract, draft rows are kept and QC is retried on its own (not a full re-extract); pipeline log shows `2026-10-14d`.
+    Note: done in `app/index.html` (PIPELINE_BUILD `2026-10-14d`). Flow is extract-once → QC up to 3 times (shrinking context) → keep rows with QC Unavailable only if all QC attempts fail. Not a model change — orchestration so the QC agent still gets to work without wiping Pass-1/2.
 
 
 
