@@ -3203,7 +3203,7 @@ function renderAiQcReport(aiQcReports) {
   const allDefects = aiQcReports.flatMap(({ fileName, qcReport }) =>
     (qcReport.defects || []).map(d => ({ ...d, fileName }))
   );
-  const worstRank = { Critical: 4, High: 3, Medium: 2, Low: 1, Clean: 0 };
+  const worstRank = { Critical: 4, High: 3, Medium: 2, Unavailable: 2, Low: 1, Clean: 0 };
   const overall = aiQcReports.reduce((worst, { qcReport }) =>
     (worstRank[qcReport.overall] || 0) > (worstRank[worst] || 0) ? qcReport.overall : worst, "Clean");
 
@@ -3212,6 +3212,8 @@ function renderAiQcReport(aiQcReports) {
   aiQcGateIconEl.textContent = overall === "Clean" ? "✔" : "🧪";
   aiQcGateTextEl.textContent = overall === "Clean"
     ? `AI QC review (informational): clean across ${aiQcReports.length} document(s) — extraction agent → QC agent, both passed.`
+    : overall === "Unavailable"
+    ? `AI QC review (informational): Unavailable — extraction draft kept; independent QC did not finish (Gateway/stream). Review rows before relying on them.`
     : `AI QC review (informational): ${overall} overall, ${allDefects.length} defect(s) noted across ${aiQcReports.length} document(s) after the validation/remediation loop. This does not block results — review before relying on flagged rows.`;
 
   if (!allDefects.length) {
