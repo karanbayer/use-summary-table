@@ -397,6 +397,7 @@ Findings recorded in `docs/CODE-REVIEW.md`.
 [x] Task 58: Add three user approval stations before final release
     Satisfies: R28, R5, R6
     Done when: after QC pass the app pauses on Station 1/3, then Station 2/3, then Station 3/3; each station has Yes/No controls; No pauses final release and export until resumed; final table/export are released only after Yes on all three stations.
+    Note (2026-10-14): stations removed post-demo — `startReviewFlow` now releases results immediately; export no longer gated. R28 waived for ongoing pilot.
     Note: done. Added `reviewGate` UI and stage workflow in `app/index.html` with pause/resume/re-run controls, stage-specific snippets, and export lock until all stations are approved.
 
 [x] Task 59: Harden multi-chunk extraction on large / master labels

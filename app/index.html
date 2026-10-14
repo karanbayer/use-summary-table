@@ -615,7 +615,8 @@
     <div class="qc-defects" id="qcDefects" role="region" aria-label="QC gate defects"></div>
     <div class="notice" id="aiQcGate" role="status" aria-live="polite" style="display:none"><span id="aiQcGateIcon" aria-hidden="true">🧪</span><span id="aiQcGateText"></span></div>
     <div class="qc-defects" id="aiQcDefects" role="region" aria-label="AI QC review (informational)"></div>
-    <div class="review-gate" id="reviewGate" role="region" aria-label="Pre-finalization review stations">
+    <!-- R28 three-station review gate removed post-demo (2026-10-14). Results release after QC. -->
+    <div class="review-gate" id="reviewGate" role="region" aria-label="Pre-finalization review stations" style="display:none" hidden>
       <h4>Review stations</h4>
       <p class="stage-title" id="reviewStageTitle"></p>
       <p class="stage-text" id="reviewStageText"></p>
@@ -629,7 +630,7 @@
       <p class="review-note" id="reviewGateNote"></p>
     </div>
     <div id="jumpBackWrap" style="display:none;margin-top:10px">
-      <button class="ghost" id="jumpBackBtn" type="button">Back to review station</button>
+      <button class="ghost" id="jumpBackBtn" type="button">Back to results</button>
     </div>
     <div class="status" id="resultsPlaceholder" role="status">Results will appear here once extraction has run.</div>
     <div class="job-files-panel" id="jobFilesPanel" role="region" aria-label="Background job files"></div>
@@ -3507,8 +3508,8 @@ function renderReviewStage() {
 }
 
 function setExportLock() {
-  const locked = !!(reviewFlow && !reviewFlow.approved);
-  downloadBtn.disabled = !allRows.length || locked;
+  // R28 stations removed — export unlocks whenever rows exist.
+  downloadBtn.disabled = !allRows.length;
 }
 
 function clearJumpContext() {
@@ -3582,18 +3583,12 @@ jumpBackBtn.addEventListener("click", () => {
   setExportLock();
 });
 
-function startReviewFlow(context) {
-  reviewFlow = {
-    approved: false,
-    paused: false,
-    stageIndex: 0,
-    stages: buildReviewStations(context)
-  };
-  placeholderEl.style.display = "block";
-  placeholderEl.textContent = "Waiting for review approval — Station 1 of 3.";
-  resultsEl.style.display = "none";
-  statusEl.textContent = "Waiting for review approval — Station 1 of 3.";
-  renderReviewStage();
+function startReviewFlow(_context) {
+  // R28 three-station human gate retired after stakeholder demo (2026-10-14).
+  // Release the table immediately after QC — same path interactive + background.
+  clearReviewFlow();
+  clearJumpContext();
+  showResults();
   setExportLock();
 }
 
@@ -4237,10 +4232,6 @@ function applyExportSheetStyle(ws, rows) {
 }
 
 downloadBtn.addEventListener("click", () => {
-  if (reviewFlow && !reviewFlow.approved) {
-    statusEl.textContent = "Approve all three review stations before exporting.";
-    return;
-  }
   if (!allRows.length) {
     statusEl.textContent = "No extracted rows to export yet.";
     return;

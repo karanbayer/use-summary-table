@@ -145,12 +145,10 @@ fallbacks), then re-check the updated rows.
 *Verify:* Run extraction on a label with missing fixable fields. QC reports remediation actions,
 the affected cells are filled, and QC re-runs on the updated table.
 
-**R28 · Three user approval stations before final release.** When QC passes, the app must pause
-before final release and step through three approval stations: document snapshot check,
-extraction-sanity check, and high-risk field check. Each station must offer Yes/No controls.
-If the user selects No, final release and export stay paused until the user resumes and approves.
-*Verify:* Run extraction on a sample label. Confirm stations 1-3 appear in order, selecting No
-at any station pauses final release, and selecting Yes through all three releases the final table.
+**R28 · Three user approval stations before final release.** ~~When QC passes, the app must pause
+before final release and step through three approval stations…~~
+**Status (2026-10-14): retired post-demo.** Results and export release immediately after QC;
+the three Yes/No stations are no longer shown. Manual cell edit (R14) remains available.
 
 ### Review and trust
 
