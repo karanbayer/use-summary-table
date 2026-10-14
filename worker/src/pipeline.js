@@ -636,6 +636,13 @@ function parseMarkedPages(pageMarkedText) {
   return pages;
 }
 
+// Rate units, crops and headings the original scorer missed — seed-treatment
+// rates ("per 100 lbs seed") and pint/quart/gram-per-acre labels scored 0,
+// so whole crop-direction chunks were skipped as barren.
+const CROP_USE_RATE_RE = /\bper\s+100\s+(?:lbs?|pounds?|kg)\b|\bproduct\s+rate\b|\b(?:pints?|pt\.?|quarts?|qt\.?|grams?|g|oz\.?|ounces?|gal(?:lons?)?)\s*(?:\/\s*A\b|per\s+acre\b)|\bfl\.?\s*oz\.?\s*(?:product\s*)?\/\s*(?:A|acre)\b/i;
+const EXTRA_CROP_RE = /\b(?:Pea|Peas|Barley|Oats?|Triticale|Rye|Beans?|Onions?|Garlic|Lettuce|Tomato(?:es)?|Pepper|Cucurbit|Melon|Strawberr(?:y|ies)|Almond|Walnut|Pecan|Apple|Pear|Cherr(?:y|ies)|Peach|Turf|Ornamental|Sugar\s*cane|Sunflower|Flax|Lentil|Chickpea|Mint|Hops?|Tobacco)\b/i;
+const CROP_SECTION_RE = /\bSPECIFIC\s+(?:CROP|USE)\s+DIRECTIONS\b|\bCROP\s+USE\s+DIRECTIONS\b|\bCROPS?\s+APPLICATION\b|\bSEED\s+TREATMENT\b/i;
+
 function scoreCropUseContent(text) {
   if (!text || text.length < 80) return 0;
   let score = 0;
@@ -646,6 +653,9 @@ function scoreCropUseContent(text) {
   if (/\bPHI\b|\bpreharvest\s+interval\b/i.test(text) && /\b(day|days)\b/i.test(text)) score += 1;
   if (/\bCROP\s+GROUP\b|\bCG\s*\d+/i.test(text)) score += 1;
   if (/\b(Citrus|Cotton|Soybean|Corn|Wheat|Alfalfa|Tree\s+Nuts|Pome\s+Fruit|Stone\s+Fruit|Rice|Sorghum|Canola|Peanut|Sugarbeet|Potato|Vegetable|Berry|Grape)\b/i.test(text)) score += 1;
+  if (CROP_USE_RATE_RE.test(text)) score += 2;
+  if (EXTRA_CROP_RE.test(text)) score += 1;
+  if (CROP_SECTION_RE.test(text)) score += 1;
   if (/\bPERSONAL\s+PROTECTIVE\s+EQUIPMENT\b|\bENGINEERING\s+CONTROLS\b/i.test(text) && score < 3) return 0;
   return score;
 }
