@@ -48,7 +48,19 @@ const REMEDIATION_MAX_CYCLES = 1; // pilot: one Opus patch cycle max (was 2)
 // /v1/models on global.ai-gateway.int.bayer.ai).
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
-const MAX_CHARS = 150000;
+/** Match interactive app pipeline for large / master labels (2026-10-14d). */
+const EXTRACT_CHUNK_CHARS_LARGE = 35000;
+const EXTRACT_FRONT_MATTER_MAX_PAGES = 8;
+const DETAIL_SKELETON_BATCH = 6;
+const FORCE_TWO_PASS_MIN_PAGES = 20;
+const QC_MAX_ATTEMPTS = 3;
+const QC_MAX_CHARS = 150000;
+const QC_MAX_CHARS_LARGE = 80000;
+const SKELETON_COLUMNS = [
+  "Reg. #/File Sym", "Physical Form", "Product Name (PBN)", "Alternative Brand Name (ABN)",
+  "Use", "Use Site", "App. Target", "App. Type", "App. Equipment",
+  "App. Timing (Site Status)", "App. Timing (other)"
+];
 export const JOB_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 /** Thrown when job:<jobId>:meta.cancelled is set — stop remaining stages. */
@@ -320,8 +332,41 @@ function applyRowPatches(rawRows, patchInput) {
   return { rows, applied, added, removed: remove.size };
 }
 
+function buildSkeletonTool() {
+  const props = {};
+  SKELETON_COLUMNS.forEach(col => {
+    props[col] = { type: "string" };
+    if (COLUMN_DEFINITIONS[col]) props[col].description = COLUMN_DEFINITIONS[col];
+  });
+  props.Page = { type: "string", description: "1-based page number for this skeleton." };
+  props.Evidence = {
+    type: "string",
+    description: "Short verbatim phrase from the label supporting this use/method skeleton."
+  };
+  return {
+    name: "emit_use_row_skeletons",
+    description:
+      "Pass 1 only: list each distinct use + use site + application method as a skeleton. "
+      + "No rates, MRI, PHI, PPE prose, or restrictions. If CHUNK BODY has no crop/use directions, return rows: [].",
+    input_schema: {
+      type: "object",
+      properties: {
+        rows: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: props,
+            required: ["Use", "Use Site", "Page"]
+          }
+        }
+      },
+      required: ["rows"]
+    }
+  };
+}
+
 function buildTools() {
-  return [buildRowSchemaTool(), buildQcReportTool(), buildRowPatchesTool()];
+  return [buildSkeletonTool(), buildRowSchemaTool(), buildQcReportTool(), buildRowPatchesTool()];
 }
 
 function buildSystemBlocks() {
@@ -546,9 +591,12 @@ async function callAnthropic(env, messages, systemBlocks, tools, toolChoiceName,
   }
   const toolUse = (data.content || []).find(b => b.type === "tool_use" && b.name === toolChoiceName);
   if (!toolUse) throw new Error(`Model response did not include the expected structured output (${toolChoiceName}).`);
-  if (toolChoiceName === "emit_use_summary_rows" && !Array.isArray(toolUse.input?.rows)) {
+  if (
+    (toolChoiceName === "emit_use_summary_rows" || toolChoiceName === "emit_use_row_skeletons")
+    && !Array.isArray(toolUse.input?.rows)
+  ) {
     throw new Error(
-      `Extraction tool returned no rows array (stream may have been truncated; stop_reason=${data.stop_reason || "unknown"}).`
+      `${toolChoiceName} returned no rows array (stream may have been truncated; stop_reason=${data.stop_reason || "unknown"}).`
     );
   }
   if (toolChoiceName === "emit_row_patches" && !Array.isArray(toolUse.input?.patches)) {
@@ -559,22 +607,229 @@ async function callAnthropic(env, messages, systemBlocks, tools, toolChoiceName,
   return { data, toolUse };
 }
 
-// Stage 1 — extraction agent: read the label, emit the initial row set.
-async function runExtractionTurn(env, jobId, fileIndex, doc, pageMarkedText, systemBlocks, tools, usageTotals) {
-  await reportStage(env, jobId, fileIndex, "extraction (stage 1/3)");
-  const stageText = "Read the entire label above and emit one row per use + use site + application method, per the rules and schema in the system prompt.";
-  const messages = [
-    { role: "user", content: buildDocMessageBlocks(doc, pageMarkedText, stageText) }
-  ];
-  const { data, toolUse } = await callAnthropic(env, messages, systemBlocks, tools, "emit_use_summary_rows");
-  await assertNotCancelled(env, jobId);
-  addUsage(usageTotals, data.usage);
-  messages.push({ role: "assistant", content: data.content });
-  return { messages, rawRows: toolUse.input?.rows ?? [], lastToolUseId: toolUse.id };
+function parseMarkedPages(pageMarkedText) {
+  const pages = [];
+  const re = /---\s*PAGE\s+(\d+)\s*---\n([\s\S]*?)(?=---\s*PAGE\s+\d+\s*---|$)/gi;
+  let m;
+  while ((m = re.exec(pageMarkedText)) !== null) {
+    pages.push({ page: Number(m[1]), text: m[2] || "" });
+  }
+  return pages;
 }
 
-// Stage 2 — QC agent: a fresh conversation, independent of the extractor's
-// own reasoning, auditing the initial row set against the label text.
+function scoreCropUseContent(text) {
+  if (!text || text.length < 80) return 0;
+  let score = 0;
+  if (/\bTYPES?\s+OF\s+APPLICATIONS?\b/i.test(text)) score += 2;
+  if (/\bUSE\s+INSTRUCTIONS\s*:/i.test(text)) score += 2;
+  if (/\bMAXIMUM\s+(APPLICATION\s+)?RATES?\b/i.test(text)) score += 2;
+  if (/\b(lb\.?\s*a\.?i\.?\.?\s*\/\s*A|fl\.?\s*oz\.?\s*\/\s*A|fluid\s+ounces?\s+per\s+acre)\b/i.test(text)) score += 2;
+  if (/\bPHI\b|\bpreharvest\s+interval\b/i.test(text) && /\b(day|days)\b/i.test(text)) score += 1;
+  if (/\bCROP\s+GROUP\b|\bCG\s*\d+/i.test(text)) score += 1;
+  if (/\b(Citrus|Cotton|Soybean|Corn|Wheat|Alfalfa|Tree\s+Nuts|Pome\s+Fruit|Stone\s+Fruit|Rice|Sorghum|Canola|Peanut|Sugarbeet|Potato|Vegetable|Berry|Grape)\b/i.test(text)) score += 1;
+  if (/\bPERSONAL\s+PROTECTIVE\s+EQUIPMENT\b|\bENGINEERING\s+CONTROLS\b/i.test(text) && score < 3) return 0;
+  return score;
+}
+
+function findDirectionsStartPageIndex(pages) {
+  for (let i = 0; i < pages.length; i++) {
+    if (/DIRECTIONS\s+FOR\s+USE|SPECIFIC\s+CROP\s+DIRECTIONS|SPECIFIC\s+USE\s+DIRECTIONS/i.test(pages[i].text || "")) {
+      return i;
+    }
+  }
+  return 0;
+}
+
+function findCropUseBodyStartPageIndex(pages) {
+  const dirIdx = findDirectionsStartPageIndex(pages);
+  for (let i = dirIdx; i < pages.length; i++) {
+    if (scoreCropUseContent(pages[i].text || "") >= 3) return i;
+  }
+  return dirIdx;
+}
+
+function wrapChunkBody(frontMatter, bodyLabel, bodyText) {
+  return [
+    frontMatter,
+    "",
+    `--- CHUNK BODY (${bodyLabel}) ---`,
+    "Scope: extract ONLY uses evidenced in CHUNK BODY.",
+    "Front-matter = product identity — not a source of extra crops.",
+    "",
+    bodyText
+  ].join("\n");
+}
+
+function extractChunkBodyText(chunkText) {
+  const raw = String(chunkText || "");
+  const m = raw.match(/---\s*CHUNK BODY[^\n]*\n([\s\S]*)/i);
+  return m ? m[1] : raw;
+}
+
+function chunkBodyLooksBarren(chunkText) {
+  const body = extractChunkBodyText(chunkText);
+  if (!body.trim()) return true;
+  if (scoreCropUseContent(body) >= 3) return false;
+  return !body.split(/---\s*PAGE\s+\d+\s*---/i).some(block => scoreCropUseContent(block) >= 3);
+}
+
+function buildPageWindowChunks(pages, frontMatter, budget) {
+  const bodyStartIdx = findCropUseBodyStartPageIndex(pages);
+  const frontEnd = Math.min(
+    pages.length,
+    Math.max(EXTRACT_FRONT_MATTER_MAX_PAGES, findDirectionsStartPageIndex(pages) + 1, bodyStartIdx)
+  );
+  if (frontEnd > EXTRACT_FRONT_MATTER_MAX_PAGES) {
+    console.log(`page windows start at page ${pages[frontEnd]?.page || frontEnd + 1} (skipped barren general directions)`);
+  }
+  const bodyPages = pages.slice(frontEnd);
+  if (!bodyPages.length) {
+    return [{ id: "full", text: pages.map(p => `--- PAGE ${p.page} ---\n${p.text}`).join("\n\n") }];
+  }
+  const chunks = [];
+  let buf = [];
+  let bufLen = frontMatter.length;
+  const flush = () => {
+    if (!buf.length) return;
+    const body = buf.map(p => `--- PAGE ${p.page} ---\n${p.text}`).join("\n\n");
+    const label = `pages ${buf[0].page}–${buf[buf.length - 1].page}`;
+    chunks.push({ id: label, text: wrapChunkBody(frontMatter, label, body) });
+    buf = [];
+    bufLen = frontMatter.length;
+  };
+  for (const p of bodyPages) {
+    const block = `--- PAGE ${p.page} ---\n${p.text}`;
+    if (buf.length && bufLen + block.length > budget) flush();
+    buf.push(p);
+    bufLen += block.length;
+  }
+  flush();
+  return chunks;
+}
+
+function buildExtractionChunks(pageMarkedText) {
+  const pages = parseMarkedPages(pageMarkedText);
+  if (!pages.length) return [{ id: "full", text: pageMarkedText }];
+  const frontCount = Math.min(EXTRACT_FRONT_MATTER_MAX_PAGES, pages.length);
+  const frontMatter = pages.slice(0, frontCount).map(p => `--- PAGE ${p.page} ---\n${p.text}`).join("\n\n");
+  if (pages.length < FORCE_TWO_PASS_MIN_PAGES && pageMarkedText.length <= EXTRACT_CHUNK_CHARS_LARGE) {
+    return [{ id: "full", text: pageMarkedText }];
+  }
+  console.log(`large label → chunk budget ${EXTRACT_CHUNK_CHARS_LARGE.toLocaleString()} chars (pages ${pages.length})`);
+  return buildPageWindowChunks(pages, frontMatter, EXTRACT_CHUNK_CHARS_LARGE);
+}
+
+function skeletonsLackUses(skeletons) {
+  if (!Array.isArray(skeletons) || !skeletons.length) return true;
+  return skeletons.every(r => {
+    const u = String(r?.Use ?? "").trim();
+    return !u || u === NOT_SPECIFIED;
+  });
+}
+
+function isMostlyEmptyNsRows(rawRows) {
+  if (!Array.isArray(rawRows) || !rawRows.length) return true;
+  let filled = 0;
+  let total = 0;
+  for (const r of rawRows) {
+    for (const col of SCHEMA) {
+      total++;
+      const v = String(r?.[col] ?? "").trim();
+      if (v && v !== NOT_SPECIFIED && v !== "NA") filled++;
+    }
+  }
+  return total > 0 && (filled / total) < 0.05;
+}
+
+function mergeSkeletonsIntoRows(skeletons, rawRows) {
+  if (!Array.isArray(skeletons) || !Array.isArray(rawRows) || !skeletons.length || !rawRows.length) {
+    return rawRows || [];
+  }
+  if (skeletons.length !== rawRows.length) return rawRows;
+  return rawRows.map((row, i) => {
+    const sk = skeletons[i] || {};
+    const out = { ...row };
+    for (const col of SKELETON_COLUMNS) {
+      const skVal = sk[col];
+      const cur = out[col];
+      const curEmpty = cur === undefined || cur === null || String(cur).trim() === "" || String(cur).trim() === NOT_SPECIFIED;
+      if (skVal !== undefined && skVal !== null && String(skVal).trim() !== "" && curEmpty) out[col] = skVal;
+    }
+    if (sk.Page && (!out.Page || String(out.Page).trim() === "" || out.Page === NOT_SPECIFIED)) out.Page = sk.Page;
+    if (sk.Evidence && (!out.Evidence || String(out.Evidence).trim() === "")) out.Evidence = sk.Evidence;
+    return out;
+  });
+}
+
+async function extractChunkTwoPass(env, jobId, fileIndex, doc, chunk, chunkIndex, chunkCount, systemBlocks, tools, usageTotals) {
+  const label = chunk.id;
+  const chunkPreface = chunkCount === 1
+    ? ""
+    : `Chunk ${chunkIndex + 1}/${chunkCount} ("${label}"). CHUNK BODY only for uses; front-matter = identity. `;
+
+  if (chunkCount > 1 && chunkBodyLooksBarren(chunk.text)) {
+    console.log(`skipping barren chunk "${label}"`);
+    return [];
+  }
+
+  await assertNotCancelled(env, jobId);
+  await reportStage(env, jobId, fileIndex, `extraction ${chunkIndex + 1}/${chunkCount} pass 1 (${label})`);
+  const skeletonNote = [
+    chunkPreface + "Pass 1/2 — call emit_use_row_skeletons.",
+    "One skeleton per use + use site + application method.",
+    "If CHUNK BODY has no crop/use directions, return rows: []."
+  ].join(" ");
+  const skMessages = [{ role: "user", content: buildDocMessageBlocks(doc, chunk.text, skeletonNote) }];
+  const skTurn = await callAnthropic(env, skMessages, systemBlocks, tools, "emit_use_row_skeletons");
+  addUsage(usageTotals, skTurn.data.usage);
+  const skeletons = skTurn.toolUse.input?.rows ?? [];
+  if (skeletonsLackUses(skeletons)) {
+    if (chunkCount > 1) {
+      console.log(`pass 1 — no usable skeletons for "${label}" (skipping)`);
+      return [];
+    }
+    throw new Error(`Pass 1 produced no usable Use skeletons for chunk "${label}"`);
+  }
+  console.log(`${label}: pass 1 → ${skeletons.length} skeleton(s)`);
+
+  const batches = [];
+  for (let i = 0; i < skeletons.length; i += DETAIL_SKELETON_BATCH) {
+    batches.push(skeletons.slice(i, i + DETAIL_SKELETON_BATCH));
+  }
+  const allMerged = [];
+  for (let b = 0; b < batches.length; b++) {
+    await assertNotCancelled(env, jobId);
+    const batch = batches[b];
+    const batchLabel = batches.length === 1 ? label : `${label} detail ${b + 1}/${batches.length}`;
+    await reportStage(env, jobId, fileIndex, `extraction ${chunkIndex + 1}/${chunkCount} pass 2 (${batchLabel})`);
+    const detailNote = [
+      chunkPreface + `Pass 2/2 — call emit_use_summary_rows (${batchLabel}).`,
+      `Fill all schema columns for these ${batch.length} skeleton(s) only.`,
+      "NS if silent, NA if not applicable — never invent.",
+      "",
+      "Pass-1 skeletons for this batch (JSON):",
+      JSON.stringify(batch)
+    ].join("\n");
+    try {
+      const detMessages = [{ role: "user", content: buildDocMessageBlocks(doc, chunk.text, detailNote) }];
+      const detTurn = await callAnthropic(env, detMessages, systemBlocks, tools, "emit_use_summary_rows");
+      addUsage(usageTotals, detTurn.data.usage);
+      const merged = mergeSkeletonsIntoRows(batch, detTurn.toolUse.input?.rows ?? []);
+      if (isMostlyEmptyNsRows(merged)) {
+        console.warn(`pass 2 empty for "${batchLabel}" (continuing)`);
+        continue;
+      }
+      allMerged.push(...merged);
+      console.log(`${batchLabel}: pass 2 → ${merged.length} row(s)`);
+    } catch (err) {
+      if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;
+      console.warn(`pass 2 failed for "${batchLabel}" — ${err.message} (continuing)`);
+    }
+  }
+  return allMerged;
+}
+
+// Stage 2 — QC agent (Sonnet), with independent retries — never re-extracts.
 async function runQcTurn(env, jobId, fileIndex, rawRows, doc, pageMarkedText, systemBlocks, tools, usageTotals) {
   await reportStage(env, jobId, fileIndex, "independent QC review (stage 2/3)");
   const stageText = [
@@ -585,11 +840,38 @@ async function runQcTurn(env, jobId, fileIndex, rawRows, doc, pageMarkedText, sy
   const messages = [
     { role: "user", content: buildDocMessageBlocks(doc, pageMarkedText, stageText) }
   ];
-  const { data, toolUse } = await callAnthropic(env, messages, systemBlocks, tools, "emit_qc_report", MODEL_ESCALATED);
+  const { data, toolUse } = await callAnthropic(env, messages, systemBlocks, tools, "emit_qc_report", MODEL_STANDARD);
   await assertNotCancelled(env, jobId);
   addUsage(usageTotals, data.usage);
   messages.push({ role: "assistant", content: data.content });
   return { messages, qcReport: toolUse.input || { overall: "Clean", defects: [] }, lastToolUseId: toolUse.id };
+}
+
+async function runQcTurnWithRetries(env, jobId, fileIndex, rawRows, doc, pageMarkedText, systemBlocks, tools, usageTotals) {
+  const pages = parseMarkedPages(pageMarkedText);
+  const large = pages.length >= FORCE_TWO_PASS_MIN_PAGES;
+  let maxChars = large ? QC_MAX_CHARS_LARGE : QC_MAX_CHARS;
+  let lastErr = null;
+  for (let attempt = 1; attempt <= QC_MAX_ATTEMPTS; attempt++) {
+    let qcLabelText = pageMarkedText;
+    if (qcLabelText.length > maxChars) {
+      qcLabelText = qcLabelText.slice(0, maxChars)
+        + `\n\n[Label truncated for QC context at ${maxChars.toLocaleString()} characters]`;
+    }
+    try {
+      if (attempt > 1) {
+        console.log(`QC retry ${attempt}/${QC_MAX_ATTEMPTS} — keeping ${rawRows.length} extraction row(s); not re-extracting`);
+        await sleep(RETRY_BASE_DELAY_MS * attempt);
+      }
+      return await runQcTurn(env, jobId, fileIndex, rawRows, doc, qcLabelText, systemBlocks, tools, usageTotals);
+    } catch (err) {
+      if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;
+      lastErr = err;
+      console.warn(`QC attempt ${attempt}/${QC_MAX_ATTEMPTS} failed — ${err.message}`);
+      maxChars = Math.max(40000, Math.floor(maxChars * 0.65));
+    }
+  }
+  throw lastErr || new Error("QC failed after retries");
 }
 
 // Stage 3 — bounded remediation loop: only engages when QC found Critical/
@@ -700,30 +982,87 @@ function buildAppRows(rawRows, doc) {
   return dedupedRows;
 }
 
-// Orchestrator — runs the extraction agent, then the QC agent, mirroring
-// app/index.html's extractWithLLM (the in-tab path), adapted to report
-// progress into KV instead of a DOM progress bar.
+// Orchestrator — chunked two-pass extract (aligned with app/index.html
+// 2026-10-14d), then QC with independent retries, then optional remediation.
 export async function extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText) {
   await assertNotCancelled(env, jobId);
-  if (pageMarkedText.length > MAX_CHARS) {
-    console.warn(`${doc.fileName} is ${pageMarkedText.length.toLocaleString()} characters — `
-      + `above the ~${MAX_CHARS.toLocaleString()}-character single-call guideline; sending the full text anyway (no chunking in v1).`);
-  }
 
   const systemBlocks = buildSystemBlocks();
   const tools = buildTools();
   const usageTotals = { inputTokens: 0, outputTokens: 0, estCostUsd: 0 };
+  const chunks = buildExtractionChunks(pageMarkedText);
+  const allRawRows = [];
 
-  console.log(`${doc.fileName} — stage 1/3 — extraction…`);
-  const extraction = await runExtractionTurn(env, jobId, fileIndex, doc, pageMarkedText, systemBlocks, tools, usageTotals);
-  console.log(`${doc.fileName} — ${extraction.rawRows.length} row(s) from initial extraction`);
+  console.log(`${doc.fileName} — stage 1/3 — two-pass extraction (${chunks.length} chunk(s))…`);
+  await reportStage(env, jobId, fileIndex, `extraction (stage 1/3, ${chunks.length} chunk(s))`);
+  let skipped = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    try {
+      const merged = await extractChunkTwoPass(
+        env, jobId, fileIndex, doc, chunks[i], i, chunks.length, systemBlocks, tools, usageTotals
+      );
+      if (!merged.length) skipped++;
+      else allRawRows.push(...merged);
+    } catch (err) {
+      if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;
+      if (chunks.length > 1) {
+        skipped++;
+        console.warn(`chunk "${chunks[i].id}" failed — ${err.message} (continuing)`);
+        continue;
+      }
+      throw err;
+    }
+  }
+  if (skipped) console.warn(`skipped ${skipped} barren/failed chunk(s); kept rows from the rest`);
+  if (!allRawRows.length) {
+    throw new Error(
+      `Two-pass extraction produced no rows across all chunks (${chunks.length} chunk(s); ${skipped} skipped/failed)`
+    );
+  }
+  console.log(`${doc.fileName} — ${allRawRows.length} row(s) from two-pass extraction`);
 
   console.log(`${doc.fileName} — stage 2/3 — independent QC review…`);
-  const qc = await runQcTurn(env, jobId, fileIndex, extraction.rawRows, doc, pageMarkedText, systemBlocks, tools, usageTotals);
+  let qc;
+  try {
+    qc = await runQcTurnWithRetries(
+      env, jobId, fileIndex, allRawRows, doc, pageMarkedText, systemBlocks, tools, usageTotals
+    );
+  } catch (err) {
+    if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;
+    console.warn(`QC failed after retries — ${err.message}. Keeping ${allRawRows.length} extraction row(s).`);
+    qc = {
+      messages: [],
+      qcReport: {
+        overall: "Unavailable",
+        defects: [{
+          severity: "Medium",
+          code: "QC-UNAVAILABLE",
+          message: `Independent QC did not complete after ${QC_MAX_ATTEMPTS} attempts: ${err.message}`,
+          rows: []
+        }]
+      },
+      lastToolUseId: null
+    };
+  }
 
-  console.log(`${doc.fileName} — stage 3/3 — bounded remediation (up to ${REMEDIATION_MAX_CYCLES} cycle(s))…`);
-  const remediated = await runRemediationLoop(env, jobId, fileIndex, qc, extraction.rawRows, systemBlocks, tools, usageTotals);
+  const needsFix = qc.qcReport && (qc.qcReport.overall === "Critical" || qc.qcReport.overall === "High");
+  console.log(needsFix
+    ? `${doc.fileName} — stage 3/3 — bounded remediation (up to ${REMEDIATION_MAX_CYCLES} cycle(s))…`
+    : `${doc.fileName} — stage 3/3 — remediation skipped (QC ${qc.qcReport?.overall || "Clean"})`);
+  let remediated;
+  try {
+    remediated = needsFix
+      ? await runRemediationLoop(env, jobId, fileIndex, qc, allRawRows, systemBlocks, tools, usageTotals)
+      : { rawRows: allRawRows, qcReport: qc.qcReport, cycles: 0 };
+  } catch (err) {
+    if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;
+    console.warn(`remediation failed — ${err.message}. Keeping ${allRawRows.length} row(s).`);
+    remediated = { rawRows: allRawRows, qcReport: qc.qcReport, cycles: 0 };
+  }
 
   const rows = buildAppRows(remediated.rawRows, doc);
+  if (!rows.length) {
+    throw new Error("Final row set is empty — not treating as a successful extract");
+  }
   return { rows, qcReport: remediated.qcReport, usage: usageTotals, remediationCycles: remediated.cycles };
 }
