@@ -4370,7 +4370,7 @@ const REMEDIATION_MAX_CYCLES = 1;
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-09-24c";
+const PIPELINE_BUILD = "2026-10-14a";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -5332,16 +5332,29 @@ async function extractChunkTwoPass(doc, chunk, chunkIndex, chunkCount, systemBlo
     ? ""
     : `Chunk ${chunkIndex + 1}/${chunkCount} ("${label}"). CHUNK BODY only for uses; front-matter = identity. `;
 
+  // Master-label page windows often hit PPE/mixing/drift prose with no crop
+  // uses. Skip those without calling the model so one barren chunk cannot
+  // abort a 100+ page extract (PIPELINE 2026-10-14a).
+  if (chunkCount > 1 && chunkBodyLooksBarren(chunk.text)) {
+    logEl.textContent += `     ⚠ skipping barren chunk "${label}" (no crop/use-rate signals)\n`;
+    return [];
+  }
+
   const skeletonNote = [
     chunkPreface + "Pass 1/2 — call emit_use_row_skeletons.",
     "One skeleton per use + use site + application method.",
     `Columns: ${SKELETON_COLUMNS.join(", ")}, Page, Evidence.`,
     "No rates, MRI, PHI, PPE prose, or restrictions in this pass.",
-    "Every skeleton needs Page + Evidence from this label."
+    "Every skeleton needs Page + Evidence from this label.",
+    "If CHUNK BODY has no crop/use directions (only PPE, mixing, drift, TOC, or warranties), return rows: []."
   ].join(" ");
 
   const skTurn = await runSkeletonPass(doc, chunk.text, systemBlocks, tools, pState, skeletonNote);
   if (skeletonsLackUses(skTurn.skeletons)) {
+    if (chunkCount > 1) {
+      logEl.textContent += `     ⚠ pass 1 — no usable Use skeletons for "${label}" (skipping chunk; continuing file)\n`;
+      return [];
+    }
     throw new Error(`Pass 1 produced no usable Use skeletons for chunk "${label}"`);
   }
   logEl.textContent += `     pass 1 → ${skTurn.skeletons.length} skeleton(s)\n`;
@@ -5361,6 +5374,10 @@ async function extractChunkTwoPass(doc, chunk, chunkIndex, chunkCount, systemBlo
   );
   const merged = mergeSkeletonsIntoRows(skTurn.skeletons, detTurn.rawRows);
   if (isMostlyEmptyNsRows(merged)) {
+    if (chunkCount > 1) {
+      logEl.textContent += `     ⚠ pass 2 — empty/NS-only for "${label}" (skipping chunk; continuing file)\n`;
+      return [];
+    }
     throw new Error(`Pass 2 returned empty or NS-only rows for chunk "${label}"`);
   }
   logEl.textContent += `     pass 2 → ${merged.length} full row(s)\n`;
@@ -5406,6 +5423,52 @@ function findDirectionsStartPageIndex(doc) {
     }
   }
   return 0;
+}
+
+/** Score whether a page looks like crop/use-rate content (not PPE/mixing/drift). */
+function scoreCropUseContent(text) {
+  if (!text || text.length < 80) return 0;
+  let score = 0;
+  if (/\bTYPES?\s+OF\s+APPLICATIONS?\b/i.test(text)) score += 2;
+  if (/\bUSE\s+INSTRUCTIONS\s*:/i.test(text)) score += 2;
+  if (/\bMAXIMUM\s+(APPLICATION\s+)?RATES?\b/i.test(text)) score += 2;
+  if (/\b(lb\.?\s*a\.?i\.?\.?\s*\/\s*A|fl\.?\s*oz\.?\s*\/\s*A|fluid\s+ounces?\s+per\s+acre)\b/i.test(text)) score += 2;
+  if (/\bPHI\b|\bpreharvest\s+interval\b/i.test(text) && /\b(day|days)\b/i.test(text)) score += 1;
+  if (/\bCROP\s+GROUP\b|\bCG\s*\d+/i.test(text)) score += 1;
+  if (/\b(Citrus|Cotton|Soybean|Corn|Wheat|Alfalfa|Tree\s+Nuts|Pome\s+Fruit|Stone\s+Fruit|Rice|Sorghum|Canola|Peanut|Sugarbeet|Potato|Vegetable|Berry|Grape)\b/i.test(text)) score += 1;
+  // PPE / closed-system / generic drift pages alone should not open the body.
+  if (/\bPERSONAL\s+PROTECTIVE\s+EQUIPMENT\b|\bENGINEERING\s+CONTROLS\b/i.test(text) && score < 3) {
+    return 0;
+  }
+  return score;
+}
+
+/**
+ * First page that looks like crop/use tables — often well after the legal
+ * "DIRECTIONS FOR USE" banner on master labels (cover letter → TOC → PPE).
+ */
+function findCropUseBodyStartPageIndex(doc) {
+  const dirIdx = findDirectionsStartPageIndex(doc);
+  for (let i = dirIdx; i < doc.pages.length; i++) {
+    if (scoreCropUseContent(doc.pages[i] || "") >= 3) return i;
+  }
+  return dirIdx;
+}
+
+function extractChunkBodyText(chunkText) {
+  const raw = String(chunkText || "");
+  const m = raw.match(/---\s*CHUNK BODY[^\n]*\n([\s\S]*)/i);
+  return m ? m[1] : raw;
+}
+
+/** True when a multi-page chunk body has almost no crop/use-rate signal. */
+function chunkBodyLooksBarren(chunkText) {
+  const body = extractChunkBodyText(chunkText);
+  if (!body.trim()) return true;
+  // Score the whole body; also accept if any single page block scores high.
+  if (scoreCropUseContent(body) >= 3) return false;
+  const pageBlocks = body.split(/---\s*PAGE\s+\d+\s*---/i);
+  return !pageBlocks.some(block => scoreCropUseContent(block) >= 3);
 }
 
 /**
@@ -5520,10 +5583,21 @@ function buildPageWindowChunks(doc, frontMatter, chunkBudget) {
     page: i + 1,
     block: `--- PAGE ${i + 1} ---\n${text}`
   }));
+  // Prefer the first crop/use-rate page over the legal DFU banner so master
+  // labels do not burn the first chunks on PPE / mixing / drift prose.
+  const bodyStartIdx = findCropUseBodyStartPageIndex(doc);
   const frontEnd = Math.min(
     markedPages.length,
-    Math.max(EXTRACT_FRONT_MATTER_MAX_PAGES, findDirectionsStartPageIndex(doc) + 1)
+    Math.max(
+      EXTRACT_FRONT_MATTER_MAX_PAGES,
+      findDirectionsStartPageIndex(doc) + 1,
+      bodyStartIdx
+    )
   );
+  if (frontEnd > EXTRACT_FRONT_MATTER_MAX_PAGES) {
+    logEl.textContent += `   page windows start at page ${frontEnd + 1} `
+      + `(skipped barren general directions before crop/use content)\n`;
+  }
   const bodyPages = markedPages.slice(frontEnd);
   if (!bodyPages.length) {
     return [{ id: "full", text: markedPages.map(p => p.block).join("\n\n") }];
@@ -5884,14 +5958,36 @@ async function extractWithLLM(doc, pState) {
     timer.mark("extract(1ch/single)");
   } else {
     logEl.textContent += `   stage 1/3 — two-pass extraction (${chunks.length} chunk(s); ${mode.reason})…\n`;
+    let skippedChunks = 0;
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
       updateAiProgress(pState, `extraction chunk ${i + 1}/${chunks.length}`);
       logEl.textContent += `   · ${chunk.id}…\n`;
-      const merged = await extractChunkTwoPass(
-        doc, chunk, i, chunks.length, systemBlocks, tools, pState
+      try {
+        const merged = await extractChunkTwoPass(
+          doc, chunk, i, chunks.length, systemBlocks, tools, pState
+        );
+        if (!merged.length) skippedChunks++;
+        else allRawRows.push(...merged);
+      } catch (err) {
+        // Multi-chunk master labels: one bad window must not kill the file.
+        if (chunks.length > 1) {
+          skippedChunks++;
+          logEl.textContent += `     ⚠ chunk "${chunk.id}" failed — ${err.message} (continuing)\n`;
+          console.warn(`[Extractor] chunk failed (${chunk.id}):`, err);
+          continue;
+        }
+        throw err;
+      }
+    }
+    if (skippedChunks) {
+      logEl.textContent += `   ⚠ skipped ${skippedChunks} barren/failed chunk(s); kept rows from the rest\n`;
+    }
+    if (!allRawRows.length) {
+      throw new Error(
+        "Two-pass extraction produced no rows across all chunks "
+        + `(${chunks.length} chunk(s); ${skippedChunks} skipped/failed)`
       );
-      allRawRows.push(...merged);
     }
     logEl.textContent += `   ${allRawRows.length} row(s) from two-pass extraction (all chunks)\n`;
     timer.mark(`extract(${chunks.length}ch/2pass)`);
