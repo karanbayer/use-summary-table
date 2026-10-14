@@ -5,7 +5,7 @@
 // disable AI without a shared KV CLI.
 
 const DEFAULT_RATE_LIMIT_PER_MINUTE = 20;
-const DEFAULT_DAILY_BUDGET_USD = 100;
+const DEFAULT_DAILY_BUDGET_USD = 300;
 const DEFAULT_AUDIT_TTL_SECONDS = 180 * 24 * 60 * 60;
 
 const MODEL_PRICING = {

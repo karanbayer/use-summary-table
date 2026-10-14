@@ -44,7 +44,8 @@ max_concurrency = 1
 # limits since they share the AUDIT_LOG counters.
 [vars]
 RATE_LIMIT_PER_MINUTE = "20"
-DAILY_BUDGET_USD = "100"
+# Raised for the 30/50-label scale test (Opus remediation can push ~$3/label).
+DAILY_BUDGET_USD = "300"
 AUDIT_TTL_SECONDS = "15552000"
 AZURE_TENANT_ID = "fcb2b37b-5da0-466b-9b83-0014b67a7c78"
 AZURE_CLIENT_ID = "5d0b410a-0b42-4427-8bd5-289c1ac0abce"

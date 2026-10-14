@@ -757,6 +757,22 @@ function buildExtractionChunks(pageMarkedText) {
   return buildPageWindowChunks(pages, frontMatter, budget);
 }
 
+// Manufacturing-use / technical products carry no crop directions, so an
+// empty extraction is the correct answer rather than a failure.
+const MANUFACTURING_USE_RE = /\b(?:for (?:further )?formulation into|only for formulation|for formulation use only)\b/i;
+
+export function isManufacturingUseLabel(text) {
+  return MANUFACTURING_USE_RE.test(String(text || ""));
+}
+
+export class NoUsesOnLabelError extends Error {
+  constructor(message, usage) {
+    super(message);
+    this.name = "NoUsesOnLabelError";
+    this.usage = usage;
+  }
+}
+
 function skeletonsLackUses(skeletons) {
   if (!Array.isArray(skeletons) || !skeletons.length) return true;
   return skeletons.every(r => {
@@ -827,6 +843,9 @@ async function extractChunkTwoPass(
     if (chunkCount > 1) {
       console.log(`pass 1 — no usable skeletons for "${label}" (skipping)`);
       return [];
+    }
+    if (isManufacturingUseLabel(chunk.text)) {
+      throw new NoUsesOnLabelError("Manufacturing-use / technical product — label lists no crop uses to extract", usageTotals);
     }
     throw new Error(`Pass 1 produced no usable Use skeletons for chunk "${label}"`);
   }
@@ -1170,6 +1189,9 @@ export async function extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText)
     if (i + 1 < chunks.length) await sleep(interChunkPauseForPages(pageCount));
   }
   if (skipped) console.warn(`skipped ${skipped} barren/failed chunk(s); kept rows from the rest`);
+  if (!allRawRows.length && isManufacturingUseLabel(pageMarkedText)) {
+    throw new NoUsesOnLabelError("Manufacturing-use / technical product — label lists no crop uses to extract", usageTotals);
+  }
   if (!allRawRows.length) {
     throw new Error(
       `Two-pass extraction produced no rows across all chunks (${chunks.length} chunk(s); ${skipped} skipped/failed)`

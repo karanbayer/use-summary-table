@@ -26,6 +26,7 @@ import {
   extractWithLLM,
   JOB_TTL_SECONDS,
   JobCancelledError,
+  NoUsesOnLabelError,
   assertNotCancelled
 } from "./pipeline.js";
 import { checkKillSwitch, checkBudget, recordUsage, recordAudit } from "./governance.js";
@@ -135,6 +136,29 @@ async function processMessage(env, jobId, fileIndex) {
         fileName,
         status: "cancelled",
         error: "Cancelled by user"
+      });
+      return;
+    }
+    if (err instanceof NoUsesOnLabelError || err?.name === "NoUsesOnLabelError") {
+      console.log(`${fileName} (job ${jobId}, file ${fileIndex}): ${err.message}`);
+      if (err.usage) await recordUsage(env, err.usage);
+      await recordAudit(env, {
+        source: "job",
+        jobId,
+        fileIndex,
+        status: "ok",
+        durationMs: Date.now() - startedAt,
+        inputTokens: err.usage?.inputTokens,
+        outputTokens: err.usage?.outputTokens,
+        estCostUsd: err.usage?.estCostUsd,
+        qcOverall: "Clean"
+      });
+      await writeFileResult(env, jobId, fileIndex, {
+        fileName,
+        status: "done",
+        rows: [],
+        noUses: true,
+        qcReport: { overall: "Clean", defects: [], note: err.message }
       });
       return;
     }

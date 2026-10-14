@@ -6253,8 +6253,26 @@ function buildAppRows(rawRows, doc) {
 // behavior specified in .github/agents/orchestrator.agent.md /
 // extraction-main.agent.md / QC-agent.agent.md, ported into this app's
 // actual runtime path instead of a manually-driven Copilot Chat session.
+// Manufacturing-use / technical products carry no crop directions, so an
+// empty extraction is the correct answer rather than a failure.
+const MANUFACTURING_USE_RE = /\b(?:for (?:further )?formulation into|only for formulation|for formulation use only)\b/i;
+const NO_USES_NOTE = "Manufacturing-use / technical product — label lists no crop uses to extract";
+
+function noUsesResult(doc, pState, timer) {
+  logEl.textContent += `   ℹ ${doc.fileName}: ${NO_USES_NOTE} (0 rows, not an error)\n`;
+  pState.step = pState.maxSteps;
+  updateAiProgress(pState, "file complete (no uses on label)");
+  return {
+    rows: [],
+    qcReport: { overall: "Clean", defects: [], note: NO_USES_NOTE },
+    remediationCycles: 0,
+    timing: timer.finish("0 row(s), manufacturing-use label")
+  };
+}
+
 async function extractWithLLM(doc, pState) {
   const timer = createPipelineTimer(doc.fileName);
+  const isManufacturingUse = MANUFACTURING_USE_RE.test(doc.pages.join("\n"));
   const pageMarkedText = doc.pages
     .map((text, i) => `--- PAGE ${i + 1} ---\n${text}`)
     .join("\n\n");
@@ -6281,6 +6299,7 @@ async function extractWithLLM(doc, pState) {
       "Read the label above and emit one row per use + use site + application method, per the rules and schema in the system prompt. NS if silent, NA if not applicable — never invent."
     );
     if (isMostlyEmptyNsRows(turn.rawRows)) {
+      if (isManufacturingUse) return noUsesResult(doc, pState, timer);
       throw new Error("Single-pass extraction returned empty or NS-only rows");
     }
     allRawRows.push(...turn.rawRows);
@@ -6304,6 +6323,9 @@ async function extractWithLLM(doc, pState) {
           chunkDone = true;
           break;
         } catch (err) {
+          if (isManufacturingUse && chunks.length === 1 && /no usable Use skeletons/.test(err.message)) {
+            return noUsesResult(doc, pState, timer);
+          }
           const retryable = isRetryableNetworkError(err) && attempt < CHUNK_EXTRACT_MAX_ATTEMPTS;
           if (retryable) {
             logEl.textContent += `     ⚠ chunk "${chunk.id}" failed (attempt ${attempt}/${CHUNK_EXTRACT_MAX_ATTEMPTS}) — ${err.message} — retrying…\n`;
@@ -6329,6 +6351,7 @@ async function extractWithLLM(doc, pState) {
     if (skippedChunks) {
       logEl.textContent += `   ⚠ skipped ${skippedChunks} barren/failed chunk(s); kept rows from the rest\n`;
     }
+    if (!allRawRows.length && isManufacturingUse) return noUsesResult(doc, pState, timer);
     if (!allRawRows.length) {
       throw new Error(
         "Two-pass extraction produced no rows across all chunks "
