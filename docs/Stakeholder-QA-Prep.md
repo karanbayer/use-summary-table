@@ -5,6 +5,20 @@ Be precise: do not oversell. Prefer “draft + human check” over “fully auto
 
 ---
 
+## 0 · Architecture (spoken answers)
+
+**Q: Is this one AI or many agents?**  
+**Two AI agents**, plus an optional remediation stage:
+
+1. **Extractor (Sonnet)** — drafts the 28-column rows from the label  
+2. **QC agent (Sonnet, fresh conversation)** — independent audit; severity Clean → Critical  
+3. **Remediation (Opus)** — only if QC is High/Critical; ≤2 cycles — a stage, not a third standing agent  
+
+Then the **human** reviews source trail, edits, and exports. Humans are not counted as AI agents.  
+(Same split as the Copilot path: `extraction-main-agent` → `QC-agent`.)
+
+---
+
 ## 1 · What is this, really?
 
 **Q: What does the tool do?**  
@@ -70,16 +84,14 @@ Yes. The operating model is **AI draft → human spot-check → human export**. 
 **Q: How often / how deep is the human check?**  
 Practically: every export path assumes a reviewer. Depth is risk-based — start with Low confidence, High/Critical QC findings, and high-impact fields (rates, PHI, REI, restrictions). Spot-check is minutes, not 100+ hours of blank-sheet transcription — but it is still a real check against the label.
 
-**Q: What are the “review stations”? Why don’t I see them?**  
-We built **3 guided stations** before finalization (used during early testing):
+**Q: What are the “review stations”?**  
+After extraction, **3 guided stations** run before the final table is released for export:
 
 1. **Document snapshot** — file, pages, product, reg # / form sanity  
 2. **Extraction sanity** — row/use counts, coverage warnings, sample source snippets  
 3. **High-risk field check** — rates, timing, PHI/REI/MRI, geographic restrictions  
 
-**Why they are off today:** after testing, **Nancy and regulatory colleagues** asked us to turn the forced station flow **off** so the path is faster and they can get the EPA-format table/Excel sooner. The station code is still in the product if we ever want it back.
-
-**What reviewers use instead (live every run):** on-screen table, **▸** source page/text, confidence filter, coverage warnings, QC notes, double-click cell edit, then Excel download. Human review remains the quality gate — it is just not a multi-step wizard blocking the export path.
+**Yes** advances; **No** pauses so you can edit, then resume. You also keep **▸** source trail, confidence filter, coverage warnings, QC notes, and cell edit.
 
 **Q: Can the chat “fix” the table without me noticing?**  
 No. Chat can **propose** an edit; you must click **Apply**. Nothing writes itself into the table.
@@ -154,7 +166,44 @@ Core path is designed to avoid random third-party script calls; libraries are ve
 
 ---
 
-## 8 · Hard questions (critical observer)
+## 8 · Multiple EPA schemas / generalising the output
+
+**Q: EPA has more than one output schema. Can we add another?**  
+**Yes.** Same label → same Agentrix / AI Gateway / 2-agent pattern. What changes is a **schema pack** (columns, fill rules, derivation, QC checks, golden examples) — not a new hosting stack.
+
+**Q: Easy or hard?**  
+
+| Change | Difficulty | Why |
+|--------|------------|-----|
+| Small variant of current UST (rename/reorder, add a few fields, same row meaning) | **Medium** | Schema + prompts + export + goldens |
+| Different EPA table (different row grain, units, semantics) | **Hard** | New rules, QC, goldens, UI, SME time |
+| “Any schema typed in” with no domain rules | **Very hard / not advisable** | Accuracy and QC collapse |
+
+Rough effort: small variant **days–2 weeks**; second full schema **several weeks**; fully generic engine **months** (and still needs per-schema rules).
+
+**Q: At what cost?**  
+Mainly **people time** (regulatory SME + engineering + re-benchmark), not model $. Once a pack exists, run cost stays in the same ballpark (~$0.50–$0.75/label).
+
+**Q: What would the architecture look like?**  
+Today: one fixed 28-column `SCHEMA`.  
+Target:
+
+```text
+Label PDF → choose Schema Pack → Extractor + QC using that pack
+         → same review UI (source trail, edit) → Excel for that pack
+```
+
+Agentrix and AI Gateway **stay the same**. The variable layer is **knowledge + schema**, not infrastructure.
+
+**Q: How easy is it to generalise to any output?**  
+Easy-ish when outputs share the same idea (one row = use × site × method, NS/NA, page citation). Hard when templates mean different things. The bottleneck is **regulatory meaning + goldens**, not drawing columns on a slide.
+
+**One-liner for the room:**  
+> “We’re productionised for this EPA Use Summary schema. A second EPA schema is doable as a schema pack on the same pipeline — medium if it’s a cousin, harder if the row definition changes. Fully arbitrary schemas aren’t free.”
+
+---
+
+## 9 · Hard questions (critical observer)
 
 **Q: If accuracy is 88%, aren’t we shipping a wrong table 12% of the time?**  
 Field-level 88% means many cells match expert gold; it does **not** mean “12% of tables are useless.” Errors concentrate in harder fields. The workflow assumes **spot-check of risky cells**, not blind acceptance. Compare to 100+ hours of manual work, which also has human error — here the draft is faster and **traceable**.
@@ -176,13 +225,14 @@ It means the **pattern worked** (draft → human check → governed Gateway) and
 
 **Q: What’s still imperfect? (say this before they find it)**  
 - Hard restriction fields still need careful human eyes  
-- Forced 3-station export gate was tested, then turned off per Nancy/regulatory feedback to speed EPA-format output (review UI still live)  
+- 3-station review gate is enabled before final table release / export  
+
 - Exact AI Gateway dollar envelope/period should be read from the portal, not guessed  
 - Broader org rollout still benefits from clear operator training sign-off hygiene  
 
 ---
 
-## 9 · One-liners for the demo
+## 10 · One-liners for the demo
 
 | Topic | Line |
 |--------|------|
@@ -191,14 +241,15 @@ It means the **pattern worked** (draft → human check → governed Gateway) and
 | Cost | “About fifty to seventy-five cents per label on a normal run, with daily caps and a kill switch.” |
 | Compliance | “No EPA submit, no silent writes — Excel only after a human is ready.” |
 | Security | “Credentials stay server-side; calls go through Bayer AI Gateway; label text is data, not instructions.” |
-| Genericity | “Schema fixed; rows and label count vary with what you upload.” |
+| Genericity | “Schema fixed for this UST; rows and label count vary with what you upload.” |
+| More EPA schemas | “Second schema = a schema pack on the same pipeline — doable, not a free toggle.” |
 
 ---
 
-## 10 · If you don’t know
+## 11 · If you don’t know
 
 Safe phrases:
 
 - “I don’t want to guess the Gateway budget period — I’ll confirm in the portal and follow up.”  
 - “That’s a good candidate for the demo — let’s open a Low-confidence row and trace it live.”  
-- “We tested the three-station wizard with Nancy’s team, then turned it off so they get EPA-format Excel faster — source trail, confidence filter, and cell edit are still there for review.”  
+- “After extraction you’ll walk three short review stations — document snapshot, extraction sanity, then high-risk fields — before Excel export unlocks.”  

@@ -20,11 +20,11 @@ version.
 ## What an operator must know before using it
 
 1. **This is human-in-the-loop, not autonomous.** The tool never submits anything to EPA
-   or any external system. Every row must be reviewed on screen before export — use
-   source expand (▸), confidence filter, coverage warnings, and QC notes. A guided
-   3-station wizard was tested with regulatory users, then turned off so the path to
-   EPA-format Excel is faster; the quality gate is still human review of the table,
-   not autonomous export. Do not export without checking the draft against the label.
+   or any external system. After extraction, complete the **3 review stations**
+   (document snapshot → extraction sanity → high-risk field check) before the final
+   table is released for export. Also use source expand (▸), confidence filter,
+   coverage warnings, and QC notes. Do not export without checking the draft against
+   the label.
 2. **`NS` vs `NA` are not interchangeable**, and neither should ever be blank. `NS` = the
    label is silent on that value. `NA` = the column doesn't apply to this use at all.
    If you see a cell that looks wrong, check the source label directly — the row's
