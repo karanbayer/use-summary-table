@@ -6213,10 +6213,11 @@ async function finishRun(documents, totalPages, _selectedAi) {
   }
   if (bad.length) console.warn("[Extractor] non-compliant rows", bad);
   noticeEl.style.display = "flex";
+  // Per-doc AI lives on documents[i].selectedAi (R23); _selectedAi is unused.
   startReviewFlow({
     documents,
     totalPages,
-    selectedAi,
+    selectedAi: _selectedAi,
     qcReport,
     remediation
   });
