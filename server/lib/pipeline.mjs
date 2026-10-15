@@ -39,7 +39,7 @@ import {
 } from "./knowledge.mjs";
 import { estimateCostUsd } from "./governance.mjs";
 import { getGatewayAccessToken, gatewayConfig } from "./entra.mjs";
-import { deriveRateCounts } from "./derive-rates.mjs";
+import { deriveRateCounts, singleActiveConcentration } from "./derive-rates.mjs";
 
 const MAX_TOKENS = 64000;
 const REMEDIATION_MAX_CYCLES = 1; // pilot: one Opus patch cycle max (was 2)
@@ -667,7 +667,7 @@ async function runRemediationLoop(env, jobId, fileIndex, state, rawRows, systemB
 // R-16 safety net — collapse rows that are outright duplicates across every
 // schema column. Applied once, on the final row set, after every pipeline
 // stage above has run.
-function buildAppRows(rawRows, doc) {
+function buildAppRows(rawRows, doc, lbPerGal = null) {
   const rows = rawRows.map(raw => {
     const row = blankRow();
     SCHEMA.forEach(col => {
@@ -678,7 +678,7 @@ function buildAppRows(rawRows, doc) {
     row["Source File"] = doc.fileName;
     row.__source = raw["Evidence"] ? String(raw["Evidence"]) : "";
     row.__derived = {};
-    deriveRateCounts(row);
+    deriveRateCounts(row, lbPerGal);
     row["Confidence"] = scoreRow(row);
     return row;
   });
@@ -726,6 +726,6 @@ export async function extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText)
   console.log(`${doc.fileName} — stage 3/3 — bounded remediation (up to ${REMEDIATION_MAX_CYCLES} cycle(s))…`);
   const remediated = await runRemediationLoop(env, jobId, fileIndex, qc, extraction.rawRows, systemBlocks, tools, usageTotals);
 
-  const rows = buildAppRows(remediated.rawRows, doc);
+  const rows = buildAppRows(remediated.rawRows, doc, singleActiveConcentration(pageMarkedText));
   return { rows, qcReport: remediated.qcReport, usage: usageTotals, remediationCycles: remediated.cycles };
 }

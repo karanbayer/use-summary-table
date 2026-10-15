@@ -172,6 +172,12 @@ fill cells that are `NS`/`NA`/blank, and mark each one derived.
 | D5.1 | `A.I. Max Total Rate/Yr.` is filled and the row's text caps it "per year" / "per calendar year" / "per crop year" | `Max No. of CC/yr = 1` (Rule 5.1) |
 | D5.2 | `App. Target` is a seed treatment | `Max # Apps/C.C.`, `Max # Apps/Yr.` and `Max No. of CC/yr` = `1` |
 | D5.3 | `Max No. of CC/yr = 1` | the C.C. and Yr. columns equal each other (Rule 5.1 cascade) |
+| D5.4 | Label has **one** active ingredient with a stated lb/gal concentration, and `App Rate` quotes the product rate (e.g. `7.0-14.0 fl oz/A`) | `Max Single Rate` = highest product rate × lb/gal ÷ 128, replacing the model's figure if it differs by more than 3%. Skipped when that product rate equals a stated cap |
+
+D5.4 exists because the model reads the product rate correctly but converts it wrongly:
+on Sivanto 200 SL (1.67 lb/gal) it wrote 0.292 lb a.i./A for 14 fl oz/A, which is 0.183. It
+does not run on multi-ingredient labels, because each active has its own concentration and
+the rate cell carries one value per active (see R-3); those rows keep the model's values.
 
 Measured on the five labels with ground truth (2026-10-15): every derived cell matched the
 expert table except six Plenexos cells, where the value was right but its multi-ingredient
