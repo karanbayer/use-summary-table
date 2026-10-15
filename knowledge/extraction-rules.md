@@ -318,19 +318,35 @@ The **App Rate** column carries the stated rate or range as printed on the label
 Max Single Rate/App.** column carries the *maximum* a single application may reach — which,
 for a range, is the upper bound.
 
-Indaziflam Blueberry Highbush (page 10): stated rate `0.045–0.065` lb ai/A. Max Single Rate
-= `0.065`. The extraction error was copying the full range `0.045–0.065` into Max Single Rate
-as well, which leaves the column non-informative.
-
 **Rule:** `A.I. Max Single Rate/App.` = the upper bound of the stated rate range. If the
-label states a flat rate (not a range), Max Single Rate equals that rate. If the label states
-multiple OM or regional brackets, Max Single Rate = the highest ceiling across all brackets,
-stated as a single number (e.g. `0.085` when brackets are `0.045–0.065` and `0.065–0.085`).
-Only use a range in Max Single Rate when the label itself states different rate ceilings for
-different conditions *and* those conditions will not be known at modeling time.
+label states a flat rate (not a range), Max Single Rate equals that rate. A range that
+reflects pest pressure or infestation level (Sivanto: `7.0–14.0 fl oz/A` by pest) has one
+ceiling: write the single highest number.
 
-**Mistake logged:** Indaziflam extraction copied App Rate range into Max Single Rate for 17
-of 22 rows; only 4 rows resolved to the ceiling correctly.
+**Soil or site brackets keep each bracket's stated rate (reviewer decision, 2026-10-15).**
+When the label sets the rate per soil or site condition — organic-matter content, soil
+texture, region — write each bracket's rate **as stated**, range included, with its
+condition, in the label's order:
+
+| Label (Indaziflam 200 SC) | Max Single Rate |
+|---|---|
+| `< 1% OM: 3.5 fl oz/A (0.045 lb ai/A)`; `≥ 1% OM: 5.0 fl oz/A (0.065 lb ai/A)` | `0.045 (<1% OM); 0.065 (≥1% OM)` |
+| `< 1% OM: 3.5–5.0`; `≥ 1% OM: 5.0–6.5 fl oz/A` (lowbush blueberry) | `0.045 to 0.065 (<1% OM); 0.065 to 0.085 (≥1% OM)` |
+| Coffee, three OM brackets | `0.045 (<1% OM); 0.065 (1-3% OM); 0.089 (>3% OM)` |
+| Farmstead areas, by soil texture | `0.065 (coarse/medium soil); 0.065 to 0.085 (fine soil)` |
+
+The site condition decides which rate applies, so collapsing the brackets overstates the
+rate for most fields. The same bracketing applies to `A.I. Max Total Rate/C.C.` and `/Yr.`
+when the label caps them per bracket (`0.09 (<1% OM); 0.13 (≥1% OM)`).
+
+**Open question for reviewers:** the Indaziflam expert table also keeps a range on rows
+with no soil brackets (citrus `0.065 to 0.085`, pome/stone fruit `0.045 to 0.085`), while the
+Sivanto, Plenexos and BYI tables reduce every pest-pressure range to its top value. Until
+reviewers decide, a range with no site condition still resolves to its top value.
+
+**Mistake logged:** an earlier Indaziflam extraction copied the App Rate range into Max
+Single Rate for 17 of 22 rows. The fix is the bracket ceilings above — not the range, and
+not one number for all brackets.
 
 ---
 
