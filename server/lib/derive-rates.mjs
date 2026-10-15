@@ -86,6 +86,31 @@ export function narrowToActive(cell, activeName) {
   return /\d/.test(value) ? `${value} (${activeName.toLowerCase()})` : null;
 }
 
+// D5.7 — acid-equivalent labels (glyphosate salts). The label states the salt and the
+// acid ("660 g … potassium salt … 5.5 lb/gal, equivalent to 540 g of the acid … 4.5 lb/gal");
+// R-22 says rates use the acid-equivalent figure.
+const AE_CONC_RE = /equivalent\s+to\s+[\d.]+\s*grams?\s+of\s+the\s+acid[\s\S]{0,80}?([\d.]+)\s*(?:lbs?|pounds?)\s+per\s+(?:U\.?S\.?\s+)?gallon/i;
+const PRODUCT_PER_ACRE_RE = /(\d+(?:\.\d+)?)(?:\s*(?:[-–]|to)\s*(\d+(?:\.\d+)?))?\s*(fl\.?\s*oz\.?|fluid\s+ounces?|pints?|quarts?|qt\.?|gal(?:lons?)?)\s+of\s+(?:this\s+)?product\b[^.;]{0,80}?\bper\s+acre/gi;
+
+/** lb acid equivalent per gallon, when the label states one; else null. */
+export function acidEquivalentConcentration(labelText) {
+  const m = String(labelText || "").replace(/\s+/g, " ").match(AE_CONC_RE);
+  const v = m ? parseFloat(m[1]) : NaN;
+  return isFinite(v) && v > 0 ? v : null;
+}
+
+function fillAcidEquivalentRate(row, aePerGal, put) {
+  if (!aePerGal || !isEmpty(String(row["App Rate (lb ai/A)"] ?? "").split("(")[0])) return;
+  const m = [...String(row["Additional Information"] ?? "").matchAll(PRODUCT_PER_ACRE_RE)];
+  if (m.length !== 1) return; // several rates in one row is ambiguous — leave it for a reviewer
+  const per = flOzPerUnit(m[0][3].replace(/\s+/g, " "));
+  if (!per) return;
+  const lo = parseFloat(m[0][1]) * per * aePerGal / 128;
+  const hi = m[0][2] ? parseFloat(m[0][2]) * per * aePerGal / 128 : null;
+  put("App Rate (lb ai/A)", `${hi ? `${lbAiText(lo)} to ${lbAiText(hi)}` : lbAiText(lo)} (a.e.)`, "D5.7-acid-equivalent");
+  if (isEmpty(String(row[SINGLE] ?? "").split("(")[0])) put(SINGLE, `${lbAiText(hi || lo)} (a.e.)`, "D5.7-acid-equivalent");
+}
+
 /** lb a.i./gal when the label has exactly one active ingredient and states it; else null. */
 export function singleActiveConcentration(labelText) {
   const text = String(labelText || "");
@@ -198,7 +223,7 @@ function deriveOneAppPerCycle(row, put) {
   if (cycles && Number.isInteger(cycles) && isEmpty(row[COL.nYr])) put(COL.nYr, String(cycles), "D5.6-one-app-per-cycle");
 }
 
-export function deriveRateCounts(row, lbPerGal = null, chosenActive = null, methodFacts = null) {
+export function deriveRateCounts(row, lbPerGal = null, chosenActive = null, methodFacts = null, aePerGal = null) {
   if (!row.__derived || typeof row.__derived !== "object") row.__derived = {};
   const put = (col, value, rule) => {
     row[col] = value;
@@ -213,6 +238,7 @@ export function deriveRateCounts(row, lbPerGal = null, chosenActive = null, meth
   }
 
   deriveSingleRate(row, lbPerGal, put, methodFacts?.kind);
+  fillAcidEquivalentRate(row, aePerGal, put);
   deriveMethod(row, methodFacts, put);
 
   // D5.2 — a seed treatment is one application on one crop cycle.

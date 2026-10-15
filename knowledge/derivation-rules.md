@@ -200,6 +200,15 @@ soil (0.365 single, 0.365 per season, 3 seasons/yr) is 1 per cycle and 3 per yea
 the foliar row (0.183 single) stays `NS` because the label states no count. Right on 20 of
 20 checkable cells.
 
+**D5.7 — acid-equivalent labels (glyphosate salts).** When the label states the acid
+equivalent ("…equivalent to 540 grams of the acid, glyphosate, per liter or 4.5 pounds per
+U.S. gallon") and a row's App Rate is `NS` but its text states exactly one product rate "of
+this product … per acre", code converts it at the acid-equivalent concentration and writes it
+with an `(a.e.)` suffix: Roundup red rice, 32 fl oz/A × 4.5 ÷ 128 = `1.125 (a.e.)`. This applies
+R-22, which the model left unapplied on every row of both Roundup master labels (256/256 and
+223/223 rate cells `NS`). Rows stating several rates, or none per acre, stay `NS`. Filled 73
+and 62 rows; no other label states an acid equivalent, so none are affected.
+
 **Method columns, also enforced in code (2026-10-15):**
 
 | # | Evidence | Value |

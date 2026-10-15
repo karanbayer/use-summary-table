@@ -40,7 +40,7 @@ import {
 } from "./knowledge.mjs";
 import { estimateCostUsd } from "./governance.mjs";
 import { getGatewayAccessToken, gatewayConfig } from "./entra.mjs";
-import { deriveRateCounts, singleActiveConcentration, chosenActiveForMultiAi, labelMethodFacts } from "./derive-rates.mjs";
+import { deriveRateCounts, singleActiveConcentration, chosenActiveForMultiAi, labelMethodFacts, acidEquivalentConcentration } from "./derive-rates.mjs";
 
 const MAX_TOKENS = 64000;
 const REMEDIATION_MAX_CYCLES = 1; // pilot: one Opus patch cycle max (was 2)
@@ -1150,7 +1150,7 @@ async function runRemediationLoop(env, jobId, fileIndex, state, rawRows, systemB
 // R-16 safety net — collapse rows that are outright duplicates across every
 // schema column. Applied once, on the final row set, after every pipeline
 // stage above has run.
-function buildAppRows(rawRows, doc, lbPerGal = null, methodFacts = null) {
+function buildAppRows(rawRows, doc, lbPerGal = null, methodFacts = null, aePerGal = null) {
   const rows = rawRows.map(raw => {
     const row = blankRow();
     SCHEMA.forEach(col => {
@@ -1161,7 +1161,7 @@ function buildAppRows(rawRows, doc, lbPerGal = null, methodFacts = null) {
     row["Source File"] = doc.fileName;
     row.__source = raw["Evidence"] ? String(raw["Evidence"]) : "";
     row.__derived = {};
-    deriveRateCounts(row, lbPerGal, doc.multiAiChoice, methodFacts);
+    deriveRateCounts(row, lbPerGal, doc.multiAiChoice, methodFacts, aePerGal);
     row["Confidence"] = scoreRow(row);
     return row;
   });
@@ -1335,7 +1335,8 @@ export async function extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText)
   }
 
   const rows = buildAppRows(
-    remediated.rawRows, doc, singleActiveConcentration(pageMarkedText), labelMethodFacts(pageMarkedText)
+    remediated.rawRows, doc, singleActiveConcentration(pageMarkedText), labelMethodFacts(pageMarkedText),
+    acidEquivalentConcentration(pageMarkedText)
   );
   if (!rows.length) {
     throw new Error("Final row set is empty — not treating as a successful extract");
