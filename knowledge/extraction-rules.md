@@ -547,8 +547,11 @@ Max Release Height (ft): 10
 ASABE Droplet Size: Coarse or Coarser
 ```
 
-Plus any outright method ban as written ("DO NOT apply by aerial equipment or
-chemigation."). Minimum application volume is **not** a drift restriction — leave it out.
+Plus, as written, any outright method ban ("DO NOT apply by aerial equipment or
+chemigation.") and any boom-height or nozzle instruction the label gives for this use
+("Keep spray boom at lowest possible height.", "Apply with nozzles that deliver medium or
+larger spray droplets (ASAE S-572.1)."). Minimum application volume and generic
+background explanation of how drift happens are **not** drift restrictions — leave them out.
 
 **Soil Restrictions** — excluded soils, placement depth, incorporation, settled-soil
 conditions, copied as written: `DO NOT use in sand. DO NOT use on soils with 20% or greater
@@ -561,9 +564,24 @@ afternoon, evening, or at night outside of daily peak foraging periods. Do not a
 foliage during foraging by alfalfa leafcutting bees used for pollination services.` Toxicity
 statements ("Highly toxic to adult …") are hazard text, not a restriction — leave them out.
 
+**Additional Restrictions for Use/Use Site** — every crop-specific prohibition or limit
+from the crop's own section that no other column holds, each as its own sentence:
+harvest and grazing intervals ("DO NOT cut hay within 30 days of application."), minimum
+interval between applications ("Allow minimum 60 days between applications."), timing and
+placement limits ("Only apply to soil as dormant application in late fall through early
+spring before bud swell.", "DO NOT apply when nuts intended for harvest are on ground."),
+contact warnings ("Avoid spray contact with foliage, green bark, roots or fruit."), and
+site-preparation steps ("Fill in cracks or depressions from transplanting prior to
+application."). Copy each bullet in full; do not keep only the first.
+
+**Geographic Restrictions** — every state, county or region limit as written, including
+sale bans ("Not for sale, distribution or use in Nassau or Suffolk County, NY.") and
+"only" clauses ("For use in eastern OR, eastern WA and Idaho only.").
+
 **Additional Information** — the use-specific directions that other columns don't hold:
 the product rate and its basis (`Apply 2.8 to 5.8 fl oz/A as directed spray…`), the stated
-caps in product units, minimum plant age, planthouse/tray instructions. Never write a
+caps in product units (`Max rate: 6.8 fl oz/A per year.`), minimum plant age,
+planthouse/tray instructions. Never write a
 placeholder such as "Rate not separately stated…; refer to …" — quote the rate the label
 gives for this use, or `NS`.
 
