@@ -91,11 +91,17 @@ def _best_match(gt_row: dict, app_rows: list[dict]) -> dict | None:
         app_target = _norm_target(r.get("app. target", ""))
         if app_target != gt_target:
             continue  # target must agree (foliar vs soil is a hard split)
-        # Type: at least one word must overlap
+        use_sim = _jaccard(gt_use, r.get("use", ""))
+        # App. Type breaks ties between rows for the same crop (foliar broadcast vs
+        # band), but never excludes the crop's own row — a type disagreement is a
+        # wrong App. Type cell, not a missing use.
         app_type_w = _word_set(r.get("app. type", ""))
         if gt_type_w and app_type_w and not (gt_type_w & app_type_w):
-            continue
-        use_sim = _jaccard(gt_use, r.get("use", ""))
+            use_sim *= 0.9
+        # A "REPLANTED X" row is a separate use from "X"; without this it ties or
+        # beats the real row on word overlap and takes its match.
+        if ("replant" in r.get("use", "").lower()) != ("replant" in gt_use.lower()):
+            use_sim *= 0.5
         if use_sim > best_score:
             best_score, best_row = use_sim, r
     return best_row if best_score >= 0.2 else None
@@ -279,6 +285,38 @@ def _load(path: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Main scoring logic
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Restriction coverage — share of the expert's restriction sentences the app
+# captured anywhere in that row's restriction columns. Word overlap on a whole
+# cell penalises a correct restriction stored next to other true ones, or filed
+# in a neighbouring column (e.g. a state ban the expert repeated in two places).
+# ---------------------------------------------------------------------------
+_RESTRICTION_COLS = [
+    _norm_col(c) for c in (
+        "Drift Restrictions", "Soil Restrictions", "On-field Non-target Species Restrictions",
+        "Additional Restrictions for Use/Use Site", "Additional Information", "Geographic Restrictions",
+    )
+]
+# Notes in the expert tables that are not label text and no extraction should produce.
+_NOT_LABEL_TEXT = {"not commercial product"}
+_STOPWORDS = set("the a an of to and or in on for with by at is be are as this that any from per not do".split())
+
+
+def _restriction_sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.;])\s+|\n+|\s{3,}", str(text or ""))
+    return [p.strip(" .;") for p in parts
+            if len(re.findall(r"[a-z]{3,}", p.lower())) >= 3 and p.strip(" .;").lower() not in _NOT_LABEL_TEXT]
+
+
+def _content_words(text: str) -> set:
+    return {w for w in re.findall(r"[a-z0-9]+(?:\.[0-9]+)?", str(text).lower()) if w not in _STOPWORDS}
+
+
+def _sentence_captured(sentence: str, app_text: str, threshold: float = 0.6) -> bool:
+    gw = _content_words(sentence)
+    return bool(gw) and len(gw & _content_words(app_text)) / len(gw) >= threshold
+
+
 def score(app_csv: str, gt_csv: str) -> None:
     app_rows = _load(app_csv)
     gt_rows  = _load(gt_csv)
@@ -325,6 +363,13 @@ def score(app_csv: str, gt_csv: str) -> None:
 
         labels[label]["matched"] += 1
 
+        row_restrictions = " ".join(str(app_row.get(c, "")) for c in _RESTRICTION_COLS)
+        for c in _RESTRICTION_COLS:
+            for sentence in _restriction_sentences(gt_row.get(c, "")):
+                labels[label]["restr_total"] = labels[label].get("restr_total", 0) + 1
+                labels[label]["restr_hits"] = labels[label].get("restr_hits", 0) + int(
+                    _sentence_captured(sentence, row_restrictions))
+
         # Score fields
         for gt_col in scorable_gt_cols:
             app_col = gt_col_to_app_col(gt_col)
@@ -370,11 +415,17 @@ def score(app_csv: str, gt_csv: str) -> None:
     overall_recall = round(100 * total_matched / total_gt) if total_gt else 0
     overall_prec   = round(100 * total_fhits   / total_ftotal) if total_ftotal else 0
     print(f"  {'OVERALL':<45} {total_gt:>8} {total_matched:>8} {overall_recall:>7}% {overall_prec:>9}%")
+    r_hits = sum(s.get("restr_hits", 0) for s in labels.values())
+    r_total = sum(s.get("restr_total", 0) for s in labels.values())
+    if r_total:
+        print(f"  {'Restriction coverage':<45} {'':>8} {'':>8} {'':>8} {round(100 * r_hits / r_total):>9}%")
     print("=" * 72)
     print()
     print("  Row recall    — % of ground-truth uses found in the app output")
     print("  Field precision — % of field values matching exactly (on matched rows)")
-    print("  Both metrics exclude NS/NA/blank cells from field scoring.")
+    print("  Restriction coverage — % of the expert's restriction sentences found in that")
+    print("                  row's restriction columns (matched rows only)")
+    print("  Recall and precision exclude NS/NA/blank cells from field scoring.")
     print()
 
 
