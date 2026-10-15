@@ -338,7 +338,9 @@ rows that appear on pages 20-21 of the label.
 
 The **App Rate** column carries the stated rate or range as printed on the label. The **A.I.
 Max Single Rate/App.** column carries what a single application may reach, by these three
-rules (reviewer decisions, 2026-10-15):
+rules (decided 2026-10-15). Evidence: the Sivanto/Plenexos/BYI UST is expert ground truth; the
+Indaziflam table that suggested the herbicide behaviour was an earlier agent output, so rule 2's
+herbicide half is a working choice, not an expert convention:
 
 1. A flat rate (not a range) is written as that rate.
 2. A range on an **insecticide/fungicide** label (Sivanto: `7.0–14.0 fl oz/A` by pest) is
@@ -346,7 +348,7 @@ rules (reviewer decisions, 2026-10-15):
    `0.045 to 0.085`.
 3. Rates set per soil or site bracket keep every bracket, on any label (below).
 
-**Soil or site brackets keep each bracket's stated rate (reviewer decision, 2026-10-15).**
+**Soil or site brackets keep each bracket's stated rate (decided 2026-10-15; follows from the label, which sets a different rate per bracket).**
 When the label sets the rate per soil or site condition — organic-matter content, soil
 texture, region — write each bracket's rate **as stated**, range included, with its
 condition, in the label's order:
@@ -662,7 +664,7 @@ sentence — against the output table, and decide each one with this test:
 
 | The crop… | Row? | Example (Indaziflam 200 SC) |
 |---|---|---|
-| has rules that **differ** from the group it sits in (its own rate, interval, establishment period or exclusion that sets it apart) | **Yes**, its own row | **Pecan**: the label says tree nuts "except pecan" need 1 year's establishment and pecan needs 3 years, so pecan is a separate use from the rest of Tree Nuts Crop Group 14-12. Expert row: "Tree Nuts Crop Group 14-12 (Pecan)". |
+| has rules that **differ** from the group it sits in (its own rate, interval, establishment period or exclusion that sets it apart) | **Yes**, its own row | **Pecan**: the label says tree nuts "except pecan" need 1 year's establishment and pecan needs 3 years, so pecan is a separate use from the rest of Tree Nuts Crop Group 14-12. |
 | is a **member of a crop group the table already has a row for**, and is only named in a shared restriction or a list | **No** — add the fact to that group row's restrictions | **Olive**: listed in Tropical & Subtropical, Inedible Peel, Crop Group 24, and named again only in "can only be applied in labeled pome and stone fruit, pecan, and olive that have been established for 3 years". The 3-year establishment goes into the Crop Group 24 row; there is no olive row. |
 | is named only as an example, exclusion or rotational crop, with no use of this product | No | "DO NOT flood-irrigate orchards … containing … olives" |
 

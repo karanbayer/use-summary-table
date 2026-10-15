@@ -1,7 +1,7 @@
 # Training Log — Indaziflam 200 SC Herbicide
 # Label: 264-1106_Indaziflam 200 SC Herbicide_5_19_2025_BASE.pdf (31 pages)
 # Extraction date: 2026-08-07
-# Compared against: hand-built Excel (Indaziflam_200SC_indaziflam_use_summary.xlsx)
+# Compared against: Indaziflam_200SC_indaziflam_use_summary.xlsx — an earlier agent output (openpyxl, 2026-07-03), NOT an expert table; corrections below were adjudicated against the PDF
 # Comparison method: cell-by-cell computation + adjudication against source PDF
 
 === 2026-08-07 · All crop groups · pp. 20-21 ===
