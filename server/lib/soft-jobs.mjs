@@ -19,6 +19,9 @@ import {
   extractWithLLM,
   JOB_TTL_SECONDS,
   JobCancelledError,
+  NoUsesOnLabelError,
+  SliceYield,
+  clearProgress,
   assertNotCancelled
 } from "./pipeline.mjs";
 
@@ -112,7 +115,23 @@ async function processMessage(env, jobId, fileIndex) {
       qcOverall: qcReport.overall
     });
     await writeFileResult(env, jobId, fileIndex, { fileName, status: "done", rows, qcReport });
+    await clearProgress(env, jobId, fileIndex);
   } catch (err) {
+    if (err instanceof SliceYield || err?.name === "SliceYield") {
+      // Only if SLICE_BUDGET_MS is set > 0 here; progress is saved, so continue it.
+      enqueue(jobId, fileIndex);
+      return;
+    }
+    if (err instanceof NoUsesOnLabelError || err?.name === "NoUsesOnLabelError") {
+      if (err.usage) await recordUsage(env, err.usage);
+      await recordAudit(env, { source: "job", jobId, fileIndex, status: "ok", durationMs: Date.now() - startedAt, qcOverall: "Clean" });
+      await writeFileResult(env, jobId, fileIndex, {
+        fileName, status: "done", rows: [], noUses: true,
+        qcReport: { overall: "Clean", defects: [], note: err.message }
+      });
+      await clearProgress(env, jobId, fileIndex);
+      return;
+    }
     if (isCancelledError(err)) {
       console.log(`${fileName} (job ${jobId}, file ${fileIndex}): cancelled mid-run`);
       await recordAudit(env, {
@@ -142,6 +161,7 @@ async function processMessage(env, jobId, fileIndex) {
       status: "error",
       error: err.message
     });
+    await clearProgress(env, jobId, fileIndex);
   }
 }
 
@@ -184,6 +204,8 @@ export function initSoftJobs(auditLog) {
 
 function softJobsEnv() {
   return {
+    // No per-invocation time limit on Agentrix: run each file in one pass.
+    SLICE_BUDGET_MS: "0",
     ...process.env,
     AUDIT_LOG: sharedAuditLog,
     JOBS

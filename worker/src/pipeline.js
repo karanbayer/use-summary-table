@@ -1170,7 +1170,14 @@ function buildAppRows(rawRows, doc, lbPerGal = null, methodFacts = null) {
 // A queue invocation is killed after ~15 minutes of wall time. Big labels run in
 // slices: progress is saved after every chunk, and once a slice passes this budget
 // it throws SliceYield so index.js re-queues the file to continue in a new run.
-const SLICE_BUDGET_MS = 10 * 60 * 1000;
+const DEFAULT_SLICE_BUDGET_MS = 10 * 60 * 1000;
+// Agentrix has no per-invocation limit; it sets SLICE_BUDGET_MS=0 to run each
+// file in one pass while still saving progress after every chunk.
+const sliceBudgetMs = env => {
+  const raw = env?.SLICE_BUDGET_MS;
+  const v = Number(raw);
+  return raw === undefined || raw === "" || !Number.isFinite(v) ? DEFAULT_SLICE_BUDGET_MS : v;
+};
 
 export class SliceYield extends Error {
   constructor(nextChunk, totalChunks) {
@@ -1216,7 +1223,8 @@ export async function extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText)
   console.log(`${doc.fileName} — stage 1/3 — two-pass extraction (${chunks.length} chunk(s), pipeline 2026-10-15r, tier=${isMegaLabel(pageCount) ? "mega" : (pageCount >= FORCE_TWO_PASS_MIN_PAGES ? "large" : "small")})${startChunk ? ` — resuming at chunk ${startChunk + 1}` : ""}…`);
   await reportStage(env, jobId, fileIndex, `extraction (stage 1/3, ${chunks.length} chunk(s))`);
   for (let i = startChunk; i < chunks.length; i++) {
-    if (i > startChunk && Date.now() - sliceStartedAt > SLICE_BUDGET_MS) {
+    const budget = sliceBudgetMs(env);
+    if (budget > 0 && i > startChunk && Date.now() - sliceStartedAt > budget) {
       throw new SliceYield(i, chunks.length);
     }
     let done = false;
