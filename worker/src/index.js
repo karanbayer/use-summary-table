@@ -114,7 +114,10 @@ async function processMessage(env, jobId, fileIndex) {
 
   const startedAt = Date.now();
   try {
-    await writeFileResult(env, jobId, fileIndex, { fileName, status: "processing" });
+    // startedAt survives slices/redeliveries so the duration covers the whole file.
+    const prior = JSON.parse((await env.JOBS.get(`job:${jobId}:file:${fileIndex}`)) || "{}");
+    const fileStartedAt = prior.startedAt || new Date(startedAt).toISOString();
+    await writeFileResult(env, jobId, fileIndex, { fileName, status: "processing", startedAt: fileStartedAt });
     const { rows, qcReport, usage, remediationCycles } = await extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText);
     // Final check — cancel may have landed during the last Gateway call.
     await assertNotCancelled(env, jobId);
@@ -131,7 +134,12 @@ async function processMessage(env, jobId, fileIndex) {
       remediationCycles,
       qcOverall: qcReport.overall
     });
-    await writeFileResult(env, jobId, fileIndex, { fileName, status: "done", rows, qcReport });
+    const finishedAt = new Date().toISOString();
+    await writeFileResult(env, jobId, fileIndex, {
+      fileName, status: "done", rows, qcReport, finishedAt,
+      durationSec: Math.round((Date.parse(finishedAt) - Date.parse(fileStartedAt)) / 1000),
+      estCostUsd: Math.round((usage.estCostUsd || 0) * 100) / 100
+    });
     await clearProgress(env, jobId, fileIndex);
   } catch (err) {
     if (err instanceof SliceYield || err?.name === "SliceYield") {

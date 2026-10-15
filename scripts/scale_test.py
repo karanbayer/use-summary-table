@@ -12,6 +12,7 @@ HTTP + text-extraction helpers so it hits the same /api/jobs path the UI uses.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import uuid
@@ -43,6 +44,20 @@ def corpus() -> list[tuple[str, int]]:
     return sorted(items, key=lambda x: (x[1], x[0]))
 
 
+# scale_analyze prices every call at Sonnet rates, but QC and remediation run on Opus;
+# the margin covers that until per-file costs from real runs (estCostUsd) recalibrate it.
+COST_SAFETY_MARGIN = 2.0
+DAILY_BUDGET_USD = float(os.environ.get("DAILY_BUDGET_USD", "300"))
+
+
+def check_budget(picks: list[tuple[str, int]]) -> None:
+    import scale_analyze as sa
+    est = sum(sa.model_file(live.SCALE_DIR / name).est_cost_usd for name, _ in picks) * COST_SAFETY_MARGIN
+    print(f"estimated batch cost ≈ ${est:.0f} (incl. {COST_SAFETY_MARGIN}x margin) vs ${DAILY_BUDGET_USD:.0f}/day budget")
+    if est > DAILY_BUDGET_USD and os.environ.get("ALLOW_OVER_BUDGET") != "1":
+        sys.exit("batch likely exceeds the daily budget — split it, or set ALLOW_OVER_BUDGET=1")
+
+
 def submit(name: str, n: int, only: list[str] | None = None) -> None:
     """only: "<file-prefix>[=<active ingredient>]" entries; the active is what the app
     would send after the user picks one on a multi-ingredient label."""
@@ -63,6 +78,7 @@ def submit(name: str, n: int, only: list[str] | None = None) -> None:
         n = len(picks)
     else:
         picks = [files[i % len(files)] for i in range(n)]
+    check_budget(picks)
     job_id = str(uuid.uuid4())
     created = live.utc_now()
     subs = []
