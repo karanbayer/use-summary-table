@@ -188,7 +188,9 @@ export function deriveRateCounts(row, lbPerGal = null, chosenActive = null, meth
     }
   }
 
-  deriveSingleRate(row, lbPerGal, put);
+  // Herbicide labels keep the stated range in Max Single Rate (R-18), so the
+  // top-of-range conversion only applies to other product types.
+  if (methodFacts?.kind !== "herbicide") deriveSingleRate(row, lbPerGal, put);
   deriveMethod(row, methodFacts, put);
 
   // D5.2 — a seed treatment is one application on one crop cycle.

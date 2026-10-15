@@ -312,16 +312,17 @@ rows that appear on pages 20-21 of the label.
 
 ---
 
-## R-18 · Max Single Rate is the ceiling of the stated range, not the range itself
+## R-18 · Max Single Rate: top value on insecticides, stated range on herbicides, every soil bracket kept
 
 The **App Rate** column carries the stated rate or range as printed on the label. The **A.I.
-Max Single Rate/App.** column carries the *maximum* a single application may reach — which,
-for a range, is the upper bound.
+Max Single Rate/App.** column carries what a single application may reach, by these three
+rules (reviewer decisions, 2026-10-15):
 
-**Rule:** `A.I. Max Single Rate/App.` = the upper bound of the stated rate range. If the
-label states a flat rate (not a range), Max Single Rate equals that rate. A range that
-reflects pest pressure or infestation level (Sivanto: `7.0–14.0 fl oz/A` by pest) has one
-ceiling: write the single highest number.
+1. A flat rate (not a range) is written as that rate.
+2. A range on an **insecticide/fungicide** label (Sivanto: `7.0–14.0 fl oz/A` by pest) is
+   written as its top value only: `0.183`. On a **herbicide** label it is written as stated:
+   `0.045 to 0.085`.
+3. Rates set per soil or site bracket keep every bracket, on any label (below).
 
 **Soil or site brackets keep each bracket's stated rate (reviewer decision, 2026-10-15).**
 When the label sets the rate per soil or site condition — organic-matter content, soil
@@ -339,14 +340,15 @@ The site condition decides which rate applies, so collapsing the brackets overst
 rate for most fields. The same bracketing applies to `A.I. Max Total Rate/C.C.` and `/Yr.`
 when the label caps them per bracket (`0.09 (<1% OM); 0.13 (≥1% OM)`).
 
-**Open question for reviewers:** the Indaziflam expert table also keeps a range on rows
-with no soil brackets (citrus `0.065 to 0.085`, pome/stone fruit `0.045 to 0.085`), while the
-Sivanto, Plenexos and BYI tables reduce every pest-pressure range to its top value. Until
-reviewers decide, a range with no site condition still resolves to its top value.
+**Never** put a seasonal or yearly cap in Max Single Rate: on Indaziflam tropical fruit the
+model wrote `0.134` (the per-year cap) where the single rate is `0.045 (<1% OM); 0.045 to
+0.065 (1-3% OM)…`. And every crop with its own dose chart has a single rate — grasses grown
+for seed, Christmas trees, conifer plantations and production nurseries were left `NS`
+although their charts state one.
 
-**Mistake logged:** an earlier Indaziflam extraction copied the App Rate range into Max
-Single Rate for 17 of 22 rows. The fix is the bracket ceilings above — not the range, and
-not one number for all brackets.
+**Mistake logged:** an earlier Indaziflam extraction collapsed every bracket to one number,
+and another copied cap values into this column. Product type is read from the label's front
+page (e.g. "INDAZIFLAM … HERBICIDE", "GROUP 4D INSECTICIDE").
 
 ---
 
