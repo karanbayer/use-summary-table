@@ -549,11 +549,18 @@ Max Release Height (ft): 10
 ASABE Droplet Size: Coarse or Coarser
 ```
 
-Plus, as written, any outright method ban ("DO NOT apply by aerial equipment or
-chemigation.") and any boom-height or nozzle instruction the label gives for this use
-("Keep spray boom at lowest possible height.", "Apply with nozzles that deliver medium or
-larger spray droplets (ASAE S-572.1)."). Minimum application volume and generic
-background explanation of how drift happens are **not** drift restrictions — leave them out.
+Always write the template lines first, each as a short value (`Max Release Height (ft): 10`,
+`ASABE Droplet Size: Coarse`) — never replace a value with the label's explanation of it.
+Then add, as written, any outright method ban ("DO NOT apply by aerial equipment or
+chemigation.") and any **one-sentence** boom or nozzle instruction that the use's own section
+states ("Keep spray boom at lowest possible height.", "Apply with nozzles that deliver medium
+or larger spray droplets (ASAE S-572.1).").
+
+Leave out: minimum application volume; how drift happens ("Drift potential increases at wind
+speeds of less than 3 mph…"); aerial equipment set-up (boom length vs wing span, wing-tip
+vortices, nozzle orientation); and calibration or droplet-coverage trade-offs. On Sivanto the
+drift cell must read `Max Release Height (ft): 10` / `ASABE Droplet Size: Coarse`, not the
+label's paragraph of aerial set-up advice.
 
 **Soil Restrictions** — excluded soils, placement depth, incorporation, settled-soil
 conditions, copied as written: `DO NOT use in sand. DO NOT use on soils with 20% or greater

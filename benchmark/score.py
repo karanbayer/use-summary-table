@@ -253,6 +253,9 @@ def _numeric_close(gt_val: str, app_val: str) -> bool:
 def _fields_match(gt_val: str, app_val: str, col: str = "") -> bool:
     if col in _NUMERIC_RATE_COLS:
         return _numeric_close(gt_val, app_val)
+    # Same equivalence row matching uses ("Foliage/Plant" = "Foliar").
+    if col == "app. target":
+        return _norm_target(gt_val) == _norm_target(app_val)
     if col in _JACCARD_COLS:
         # Pass field name to Jaccard for field-specific normalization
         jaccard_sim = _jaccard(gt_val, app_val, col)
