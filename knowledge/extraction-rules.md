@@ -551,6 +551,19 @@ caps in product units, minimum plant age, planthouse/tray instructions. Never wr
 placeholder such as "Rate not separately stated…; refer to …" — quote the rate the label
 gives for this use, or `NS`.
 
+**Take every restriction and Additional Information from the crop's own section first**
+(R-23 applies to these columns too). Many labels open with a generic paragraph for a whole
+crop class ("trees and vines", "all crops"), then give each crop its own dose chart,
+minimum plant age and restriction bullets. The crop's own bullets are what belongs in its
+row; the generic paragraph only fills a column the crop's section leaves silent. Before
+writing `NS` in Additional Information, check the crop's dose-rate chart — rates, minimum
+plant age and per-year maxima are nearly always there.
+
+| Indaziflam 200 SC, Blueberry (Highbush) | Wrong (generic trees/vines paragraph) | Right (crop's own section) |
+|---|---|---|
+| Additional Restrictions | "The trunks are protected from spray contact by nonporous wraps…" | "DO NOT allow spray to contact green stems, foliage, flowers, or berries…" |
+| Additional Information | `NS` | "Minimum plant age: 1 year (3 years in California). Max rate per application: 3.5 fl oz/A (<1% OM) or 5.0 fl oz/A (≥1% OM)…" |
+
 **Mistake logged (2026-10-15):** drift cells held minimum-volume and calibration text
 instead of the four limits above (Plenexos, Sivanto); a pollinator cell led with the
 toxicity statement; Indaziflam replant rows wrote "Rate not separately stated" where the
