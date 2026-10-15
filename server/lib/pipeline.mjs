@@ -969,6 +969,25 @@ function buildQcLabelText(pageMarkedText, rawRows, maxChars) {
   return out;
 }
 
+// "overall" is the worst single defect, so on a 40-row label it is Critical almost
+// by definition. A per-row summary tells a reviewer how much to check and where.
+export function summarizeQcRows(qcReport, rowCount) {
+  const flagged = new Set();
+  for (const d of qcReport?.defects || []) {
+    const i = d?.row_index;
+    if ((d?.severity === "Critical" || d?.severity === "High") && Number.isInteger(i) && i >= 0 && i < rowCount) {
+      flagged.add(i);
+    }
+  }
+  const rows = [...flagged].sort((a, b) => a - b);
+  return {
+    rowsFlagged: rows.length,
+    rowCount,
+    flaggedRows: rows,
+    summary: rowCount ? `${rows.length} of ${rowCount} rows have a Critical/High QC flag` : "no rows"
+  };
+}
+
 function mergeQcReports(reports) {
   const rank = { Critical: 4, High: 3, Medium: 2, Low: 1, Clean: 0, Unavailable: 3 };
   let overall = "Clean";
@@ -1321,5 +1340,7 @@ export async function extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText)
   if (!rows.length) {
     throw new Error("Final row set is empty — not treating as a successful extract");
   }
-  return { rows, qcReport: remediated.qcReport, usage: usageTotals, remediationCycles: remediated.cycles };
+  // Summarise on the row set QC actually reviewed (before dedup renumbers rows).
+  const qcReport = { ...remediated.qcReport, rowSummary: summarizeQcRows(remediated.qcReport, remediated.rawRows.length) };
+  return { rows, qcReport, usage: usageTotals, remediationCycles: remediated.cycles };
 }

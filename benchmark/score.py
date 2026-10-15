@@ -256,6 +256,10 @@ def _fields_match(gt_val: str, app_val: str, col: str = "") -> bool:
     # Same equivalence row matching uses ("Foliage/Plant" = "Foliar").
     if col == "app. target":
         return _norm_target(gt_val) == _norm_target(app_val)
+    # PPE is a list; "a; b; c" and "a, b, c" are the same items.
+    if col == "ppe":
+        items = lambda v: {re.sub(r"[^a-z ]", "", p).strip() for p in re.split(r"[;,\n]", str(v).lower()) if p.strip()}
+        return items(gt_val) == items(app_val)
     if col in _JACCARD_COLS:
         # Pass field name to Jaccard for field-specific normalization
         jaccard_sim = _jaccard(gt_val, app_val, col)

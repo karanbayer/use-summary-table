@@ -136,7 +136,13 @@ Called out explicitly in `ush679sc470_training_log.txt`:
 > *"Notice the specific placement of 'App Rate (lb ai/A)', 'Minimum Retreatment Interval',
 > 'REI', and 'PPE'."*
 
-- **PPE** — extract separately, verbatim from the label's PPE section
+- **PPE** — extract separately, verbatim from the label's PPE section. This is the
+  **handler** list ("All mixers, loaders, applicators and other handlers must wear: …"),
+  e.g. Indaziflam `Long-sleeved shirt and long pants; shoes plus socks; waterproof gloves`.
+  Never use the Agricultural Use Requirements' **early-entry** list ("PPE required for early
+  entry to treated areas … Coveralls; Chemical resistant gloves…") — that is for workers
+  re-entering before the REI expires, not for applicators. On Indaziflam 7 of 22 rows took
+  the early-entry list.
 - **MRI** — distinct from PHI; easy to overlook
 - **REI** — in **hours**; PHI is in **days**. A swap is a **Critical** defect.
 - **App Rate (lb ai/A)** — the actual applied rate, distinct from *Max Single Rate*
