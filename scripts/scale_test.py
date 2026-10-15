@@ -86,13 +86,21 @@ def submit(name: str, n: int, only: list[str] | None = None) -> None:
         text, _ = live.page_marked_text(live.SCALE_DIR / fname)
         body = {"jobId": job_id, "fileIndex": idx, "totalFiles": n, "fileName": fname,
                 "pageMarkedText": text, "selectedAi": chosen.get(fname), "createdAt": created}
-        st, resp = live.http_json("POST", "/api/jobs", body)
+        st, resp = 0, {}
+        for attempt in range(3):
+            try:
+                st, resp = live.http_json("POST", "/api/jobs", body)
+                break
+            except Exception as exc:  # noqa: BLE001 — network blips; the job id is reused
+                print(f"    submit retry {attempt + 1}/3 after: {exc}", flush=True)
+                time.sleep(5)
         ok = st in (200, 202) and resp.get("ok")
         subs.append({"fileIndex": idx, "fileName": fname, "pages": pages, "ok": bool(ok), "http": st})
         print(f"  {'✔' if ok else '✖'} [{idx+1}/{n}] {fname} ({pages}p) HTTP {st}", flush=True)
+        # Record after every file so an interrupted submit never leaves an untracked job.
+        state["batches"][name] = {"jobId": job_id, "submittedAt": created, "n": n, "files": subs, "seen": {}}
+        save_state(state)
         time.sleep(live.SUBMIT_GAP_SECONDS)
-    state["batches"][name] = {"jobId": job_id, "submittedAt": created, "n": n, "files": subs, "seen": {}}
-    save_state(state)
     print(f"batch {name}: job {job_id} — {sum(s['ok'] for s in subs)}/{n} queued")
     print(f"watch: {live.BASE_URL}/?job={job_id}")
 

@@ -34,9 +34,10 @@ id = "039b547f3edb4752adda83a97470c9ff"
 [[queues.consumers]]
 queue = "use-summary-jobs"
 max_batch_size = 1
-# One file at a time — master labels make many Gateway calls; concurrency 2
-# was exhausting the Gateway and leaving Bedrock/stream failures.
-max_concurrency = 1
+# Concurrency 2 was once dropped to 1 for "exhausting the Gateway", but that was
+# before the US-plane Bedrock 403s were traced and routed around (EU pin); retested
+# 2026-10-15.
+max_concurrency = 2
 # A big label runs in ~10-minute slices (src/index.js re-queues itself with its
 # progress saved in KV). These retries only cover a slice killed before it could
 # re-queue; it resumes from the last saved chunk, not page 1.
