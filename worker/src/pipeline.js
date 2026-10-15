@@ -1167,21 +1167,58 @@ function buildAppRows(rawRows, doc, lbPerGal = null, methodFacts = null) {
 
 // Orchestrator — chunked two-pass extract (aligned with app/index.html
 // 2026-10-14d), then QC with independent retries, then optional remediation.
+// A queue invocation is killed after ~15 minutes of wall time. Big labels run in
+// slices: progress is saved after every chunk, and once a slice passes this budget
+// it throws SliceYield so index.js re-queues the file to continue in a new run.
+const SLICE_BUDGET_MS = 10 * 60 * 1000;
+
+export class SliceYield extends Error {
+  constructor(nextChunk, totalChunks) {
+    super(`yielding after chunk ${nextChunk}/${totalChunks} — continuing in a new invocation`);
+    this.name = "SliceYield";
+  }
+}
+
+const progressKey = (jobId, fileIndex) => `job:${jobId}:progress:${fileIndex}`;
+
+async function loadProgress(env, jobId, fileIndex, chunkCount) {
+  const text = await env.JOBS.get(progressKey(jobId, fileIndex));
+  const saved = text ? JSON.parse(text) : null;
+  // Chunking is deterministic for the same text; a mismatch means stale progress.
+  if (!saved || saved.chunkCount !== chunkCount) return null;
+  return saved;
+}
+
+async function saveProgress(env, jobId, fileIndex, progress) {
+  await env.JOBS.put(progressKey(jobId, fileIndex), JSON.stringify(progress), { expirationTtl: JOB_TTL_SECONDS });
+}
+
+export async function clearProgress(env, jobId, fileIndex) {
+  await env.JOBS.delete(progressKey(jobId, fileIndex));
+}
+
 export async function extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText) {
+  const sliceStartedAt = Date.now();
   doc.multiAiChoice = chosenActiveForMultiAi(pageMarkedText, doc.selectedAi);
   await assertNotCancelled(env, jobId);
 
   const systemBlocks = buildSystemBlocks();
   const tools = buildTools();
-  const usageTotals = { inputTokens: 0, outputTokens: 0, estCostUsd: 0 };
   const chunks = buildExtractionChunks(pageMarkedText);
-  const allRawRows = [];
   const pageCount = parseMarkedPages(pageMarkedText).length;
 
-  console.log(`${doc.fileName} — stage 1/3 — two-pass extraction (${chunks.length} chunk(s), pipeline 2026-10-14f, tier=${isMegaLabel(pageCount) ? "mega" : (pageCount >= FORCE_TWO_PASS_MIN_PAGES ? "large" : "small")})…`);
+  const saved = await loadProgress(env, jobId, fileIndex, chunks.length);
+  const usageTotals = saved?.usageTotals || { inputTokens: 0, outputTokens: 0, estCostUsd: 0 };
+  const allRawRows = saved?.rawRows || [];
+  let skipped = saved?.skipped || 0;
+  const startChunk = saved?.nextChunk || 0;
+
+  console.log(`${doc.fileName} — stage 1/3 — two-pass extraction (${chunks.length} chunk(s), pipeline 2026-10-15r, tier=${isMegaLabel(pageCount) ? "mega" : (pageCount >= FORCE_TWO_PASS_MIN_PAGES ? "large" : "small")})${startChunk ? ` — resuming at chunk ${startChunk + 1}` : ""}…`);
   await reportStage(env, jobId, fileIndex, `extraction (stage 1/3, ${chunks.length} chunk(s))`);
-  let skipped = 0;
-  for (let i = 0; i < chunks.length; i++) {
+  for (let i = startChunk; i < chunks.length; i++) {
+    if (i > startChunk && Date.now() - sliceStartedAt > SLICE_BUDGET_MS) {
+      throw new SliceYield(i, chunks.length);
+    }
     let done = false;
     for (let attempt = 1; attempt <= CHUNK_EXTRACT_MAX_ATTEMPTS; attempt++) {
       try {
@@ -1209,6 +1246,11 @@ export async function extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText)
       }
     }
     if (!done && chunks.length > 1) skipped++;
+    if (chunks.length > 1) {
+      await saveProgress(env, jobId, fileIndex, {
+        chunkCount: chunks.length, nextChunk: i + 1, rawRows: allRawRows, skipped, usageTotals
+      });
+    }
     if (i + 1 < chunks.length) await sleep(interChunkPauseForPages(pageCount));
   }
   if (skipped) console.warn(`skipped ${skipped} barren/failed chunk(s); kept rows from the rest`);

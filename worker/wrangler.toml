@@ -37,6 +37,15 @@ max_batch_size = 1
 # One file at a time — master labels make many Gateway calls; concurrency 2
 # was exhausting the Gateway and leaving Bedrock/stream failures.
 max_concurrency = 1
+# A big label runs in ~10-minute slices (src/index.js re-queues itself with its
+# progress saved in KV). These retries only cover a slice killed before it could
+# re-queue; it resumes from the last saved chunk, not page 1.
+max_retries = 8
+
+# Lets a slice put its own file back on the queue to continue in a fresh invocation.
+[[queues.producers]]
+binding = "JOBS_QUEUE"
+queue = "use-summary-jobs"
 
 # Non-secret config for src/governance.js. Safe defaults are baked into the
 # code too, so nothing breaks if these are ever unset. Keep these in sync

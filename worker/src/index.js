@@ -27,9 +27,19 @@ import {
   JOB_TTL_SECONDS,
   JobCancelledError,
   NoUsesOnLabelError,
+  SliceYield,
+  clearProgress,
   assertNotCancelled
 } from "./pipeline.js";
 import { checkKillSwitch, checkBudget, recordUsage, recordAudit } from "./governance.js";
+
+// A delivery count past this means a slice keeps being killed before it can save
+// and re-queue — give up with a visible error instead of leaving "processing".
+// Matches max_retries in wrangler.toml.
+const MAX_DELIVERIES = 8;
+// Upper bound on 10-minute slices per file (~5 hours) — a 178-page label needs ~8.
+const MAX_SLICES = 30;
+const sliceCountKey = (jobId, fileIndex) => `job:${jobId}:slices:${fileIndex}`;
 
 function isCancelledError(err) {
   return err instanceof JobCancelledError || err?.name === "JobCancelledError";
@@ -122,7 +132,24 @@ async function processMessage(env, jobId, fileIndex) {
       qcOverall: qcReport.overall
     });
     await writeFileResult(env, jobId, fileIndex, { fileName, status: "done", rows, qcReport });
+    await clearProgress(env, jobId, fileIndex);
   } catch (err) {
+    if (err instanceof SliceYield || err?.name === "SliceYield") {
+      const slices = (Number(await env.JOBS.get(sliceCountKey(jobId, fileIndex))) || 0) + 1;
+      if (slices > MAX_SLICES) {
+        await writeFileResult(env, jobId, fileIndex, {
+          fileName,
+          status: "error",
+          error: `Stopped after ${MAX_SLICES} ten-minute slices without finishing.`
+        });
+        await clearProgress(env, jobId, fileIndex);
+        return;
+      }
+      await env.JOBS.put(sliceCountKey(jobId, fileIndex), String(slices), { expirationTtl: JOB_TTL_SECONDS });
+      console.log(`${fileName} (job ${jobId}, file ${fileIndex}): slice ${slices} — ${err.message}`);
+      await env.JOBS_QUEUE.send({ jobId, fileIndex });
+      return;
+    }
     if (isCancelledError(err)) {
       console.log(`${fileName} (job ${jobId}, file ${fileIndex}): cancelled mid-run`);
       await recordAudit(env, {
@@ -160,11 +187,13 @@ async function processMessage(env, jobId, fileIndex) {
         noUses: true,
         qcReport: { overall: "Clean", defects: [], note: err.message }
       });
+      await clearProgress(env, jobId, fileIndex);
       return;
     }
     console.error(`${fileName} (job ${jobId}, file ${fileIndex}) failed: ${err.message}`);
     await recordAudit(env, { source: "job", jobId, fileIndex, status: "error", durationMs: Date.now() - startedAt });
     await writeFileResult(env, jobId, fileIndex, { fileName, status: "error", error: err.message });
+    await clearProgress(env, jobId, fileIndex);
   }
 }
 
@@ -172,6 +201,16 @@ export default {
   async queue(batch, env, ctx) {
     for (const message of batch.messages) {
       const { jobId, fileIndex } = message.body;
+      if ((message.attempts || 1) > MAX_DELIVERIES) {
+        console.error(`job ${jobId} file ${fileIndex}: ${message.attempts} deliveries — marking failed`);
+        await writeFileResult(env, jobId, fileIndex, {
+          status: "error",
+          error: `Stopped after ${MAX_DELIVERIES} attempts: each run ran out of time before it could save progress.`
+        });
+        await clearProgress(env, jobId, fileIndex);
+        message.ack();
+        continue;
+      }
       try {
         await processMessage(env, jobId, fileIndex);
       } catch (err) {

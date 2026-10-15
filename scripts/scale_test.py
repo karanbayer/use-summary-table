@@ -43,19 +43,33 @@ def corpus() -> list[tuple[str, int]]:
     return sorted(items, key=lambda x: (x[1], x[0]))
 
 
-def submit(name: str, n: int) -> None:
+def submit(name: str, n: int, only: list[str] | None = None) -> None:
+    """only: "<file-prefix>[=<active ingredient>]" entries; the active is what the app
+    would send after the user picks one on a multi-ingredient label."""
     state = load_state()
     if name in state["batches"]:
         sys.exit(f"batch {name} already submitted")
     files = corpus()
-    picks = [files[i % len(files)] for i in range(n)]
+    chosen = {}
+    if only:
+        picks = []
+        for spec in only:
+            prefix, _, ai = spec.partition("=")
+            match = next((f for f in files if f[0].startswith(prefix)), None)
+            if not match:
+                sys.exit(f"no file starts with {prefix!r}")
+            picks.append(match)
+            chosen[match[0]] = ai or None
+        n = len(picks)
+    else:
+        picks = [files[i % len(files)] for i in range(n)]
     job_id = str(uuid.uuid4())
     created = live.utc_now()
     subs = []
     for idx, (fname, pages) in enumerate(picks):
         text, _ = live.page_marked_text(live.SCALE_DIR / fname)
         body = {"jobId": job_id, "fileIndex": idx, "totalFiles": n, "fileName": fname,
-                "pageMarkedText": text, "selectedAi": "claude-sonnet", "createdAt": created}
+                "pageMarkedText": text, "selectedAi": chosen.get(fname), "createdAt": created}
         st, resp = live.http_json("POST", "/api/jobs", body)
         ok = st in (200, 202) and resp.get("ok")
         subs.append({"fileIndex": idx, "fileName": fname, "pages": pages, "ok": bool(ok), "http": st})
@@ -158,6 +172,8 @@ if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "submit":
         submit(sys.argv[2], int(sys.argv[3]))
+    elif cmd == "submit-files":
+        submit(sys.argv[2], 0, sys.argv[3:])
     elif cmd == "snapshot":
         snapshot()
     elif cmd == "report":
