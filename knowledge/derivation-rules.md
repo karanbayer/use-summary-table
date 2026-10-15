@@ -160,6 +160,30 @@ period the label never caps at all.
 
 ---
 
+## D5 · Rate and count columns (enforced in code after extraction)
+
+These follow from what the label states, so the model was told to apply them, yet it
+mostly left the cells `NS`. They now run in code after extraction
+(`worker/src/derive-rates.js`, plus copies in `server/lib/` and `app/index.html`). They only
+fill cells that are `NS`/`NA`/blank, and mark each one derived.
+
+| # | Evidence | Value |
+|---|---|---|
+| D5.1 | `A.I. Max Total Rate/Yr.` is filled and the row's text caps it "per year" / "per calendar year" / "per crop year" | `Max No. of CC/yr = 1` (Rule 5.1) |
+| D5.2 | `App. Target` is a seed treatment | `Max # Apps/C.C.`, `Max # Apps/Yr.` and `Max No. of CC/yr` = `1` |
+| D5.3 | `Max No. of CC/yr = 1` | the C.C. and Yr. columns equal each other (Rule 5.1 cascade) |
+
+Measured on the five labels with ground truth (2026-10-15): every derived cell matched the
+expert table except six Plenexos cells, where the value was right but its multi-ingredient
+format (`0.172 SPD; 0.36 FPF`) differs from the table's (`0.36`).
+
+**D4.1 is not enforced in code.** Deriving a count as total cap ÷ single rate was wrong on
+about a quarter of the cells it could be checked against, mostly because the model had put
+the wrong figure in the single-rate cell. Requiring the quotient to be a whole number did not
+help. It stays a prompt-level rule only, until the single-rate extraction is reliable.
+
+---
+
 ## Reviewing derived values
 
 Every value these rules produce is logged in the run log under the row it belongs to, naming

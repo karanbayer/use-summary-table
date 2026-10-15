@@ -39,6 +39,7 @@ import {
 } from "./knowledge.mjs";
 import { estimateCostUsd } from "./governance.mjs";
 import { getGatewayAccessToken, gatewayConfig } from "./entra.mjs";
+import { deriveRateCounts } from "./derive-rates.mjs";
 
 const MAX_TOKENS = 64000;
 const REMEDIATION_MAX_CYCLES = 1; // pilot: one Opus patch cycle max (was 2)
@@ -677,6 +678,7 @@ function buildAppRows(rawRows, doc) {
     row["Source File"] = doc.fileName;
     row.__source = raw["Evidence"] ? String(raw["Evidence"]) : "";
     row.__derived = {};
+    deriveRateCounts(row);
     row["Confidence"] = scoreRow(row);
     return row;
   });
