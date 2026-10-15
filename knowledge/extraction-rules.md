@@ -654,25 +654,23 @@ section.
 
 ---
 
-## R-25 · A crop named only inside another group's shared sentence still gets its own row
+## R-25 · A crop named inside another group's sentence gets a row only if it has its own rules
 
-After building the crop inventory, explicitly check every crop named anywhere in the
-document — including inside another crop group's shared establishment, rotational, or
-exception sentence — against the output table. A crop mentioned only in passing inside a
-different group's paragraph is not "covered" by that group's row.
+After building the crop inventory, check every crop named anywhere in the document —
+including inside another crop group's shared establishment, rotational or exception
+sentence — against the output table, and decide each one with this test:
 
-**Rule:** if the label states any use pattern for a crop — even one folded into another
-crop group's sentence rather than given its own heading — that crop gets its own row.
+| The crop… | Row? | Example (Indaziflam 200 SC) |
+|---|---|---|
+| has rules that **differ** from the group it sits in (its own rate, interval, establishment period or exclusion that sets it apart) | **Yes**, its own row | **Pecan**: the label says tree nuts "except pecan" need 1 year's establishment and pecan needs 3 years, so pecan is a separate use from the rest of Tree Nuts Crop Group 14-12. Expert row: "Tree Nuts Crop Group 14-12 (Pecan)". |
+| is a **member of a crop group the table already has a row for**, and is only named in a shared restriction or a list | **No** — add the fact to that group row's restrictions | **Olive**: listed in Tropical & Subtropical, Inedible Peel, Crop Group 24, and named again only in "can only be applied in labeled pome and stone fruit, pecan, and olive that have been established for 3 years". The 3-year establishment goes into the Crop Group 24 row; there is no olive row. |
+| is named only as an example, exclusion or rotational crop, with no use of this product | No | "DO NOT flood-irrigate orchards … containing … olives" |
 
-**Mistake logged:** Indaziflam extraction named pecan only inside the Pome/Stone
-Fruit/Subgroup-23A group's shared 3-year-establishment sentence and never gave it a
-standalone row.
+A row whose rates would all be `NS` is a sign the crop belongs in its group's row instead.
 
-**Open question for reviewers (2026-10-15):** the Indaziflam 200 SC expert table does give
-pecan its own row ("Tree Nuts (Pecan)"), but has no olive row, although the model also made
-one from a passing mention in the restrictions. Until reviewers decide, keep this rule: a
-crop named with its own use pattern (rate, interval or establishment period) gets a row; a
-crop named only in a list of exclusions or examples does not.
+**Mistakes logged:** Indaziflam extraction once gave pecan no row (wrong — its establishment
+rule differs from the group), and later gave olive a row of `NS` rates from the
+establishment sentence (wrong — it is already a Crop Group 24 member).
 
 ---
 
@@ -732,7 +730,7 @@ Before releasing a table:
       buffers / release height / droplet size, no volume or calibration advice (**R-28**)
 - [ ] Per-application ceiling and annual cap each traced to their own label sentence, never
       cross-populated (**R-24**)
-- [ ] Every crop named anywhere in the document — including inside another group's shared
-      sentence — has its own row (**R-25**)
+- [ ] A crop named inside another group's sentence has its own row only if its rules differ
+      from the group (pecan yes, olive no); no row is all `NS` rates (**R-25**)
 - [ ] On multi-active-ingredient products, per-active rate cells sum to any combined `lb ai/A`
       figure the label prints at that same rate point (**R-26**)
