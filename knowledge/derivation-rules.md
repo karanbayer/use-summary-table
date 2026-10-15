@@ -174,6 +174,16 @@ fill cells that are `NS`/`NA`/blank, and mark each one derived.
 | D5.3 | `Max No. of CC/yr = 1` | the C.C. and Yr. columns equal each other (Rule 5.1 cascade) |
 | D5.4 | Label has **one** active ingredient with a stated lb/gal concentration, and `App Rate` quotes the product rate (e.g. `7.0-14.0 fl oz/A`) | `Max Single Rate` = highest product rate × lb/gal ÷ 128, replacing the model's figure if it differs by more than 3%. Skipped when that product rate equals a stated cap |
 
+**D5.5 — multi-ingredient labels report one chosen active (format B, agreed 2026-10-15).**
+When the label's Active Ingredients box lists two or more actives and the user picks one,
+every lb a.i./A rate column carries only that active's value with its name in brackets:
+`0.18 (flupyradifurone)`. The model is told this in each extraction, QC and remediation
+request; if a cell still lists every active (`0.086 SPD; 0.18 FPF`), code keeps the chosen
+one when it can match it unambiguously, using the house abbreviations (ICM, IDF, FLU, SPD,
+FPF, BXN). Ambiguous cells (a wrong abbreviation, or a mix of organic-matter brackets) are
+left as the model wrote them. Narrowing runs before D5.3, so the cascade copies the
+narrowed value. On Plenexos this took the rate and count columns from 10/30 to 30/30.
+
 D5.4 exists because the model reads the product rate correctly but converts it wrongly:
 on Sivanto 200 SL (1.67 lb/gal) it wrote 0.292 lb a.i./A for 14 fl oz/A, which is 0.183. It
 does not run on multi-ingredient labels, because each active has its own concentration and

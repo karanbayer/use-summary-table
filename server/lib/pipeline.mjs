@@ -39,7 +39,7 @@ import {
 } from "./knowledge.mjs";
 import { estimateCostUsd } from "./governance.mjs";
 import { getGatewayAccessToken, gatewayConfig } from "./entra.mjs";
-import { deriveRateCounts, singleActiveConcentration } from "./derive-rates.mjs";
+import { deriveRateCounts, singleActiveConcentration, chosenActiveForMultiAi } from "./derive-rates.mjs";
 
 const MAX_TOKENS = 64000;
 const REMEDIATION_MAX_CYCLES = 1; // pilot: one Opus patch cycle max (was 2)
@@ -355,6 +355,16 @@ function buildDocMessageBlocks(doc, pageMarkedText, stageInstructionText) {
     },
     { type: "text", text: pageMarkedText, cache_control: { type: "ephemeral" } }
   ];
+  if (doc.multiAiChoice) {
+    // Option B (2026-10-15): multi-active labels report only the chosen active's rates.
+    blocks.push({
+      type: "text",
+      text: `This label has more than one active ingredient. Report rates for ${doc.multiAiChoice} only: `
+        + `in every lb a.i./A rate column write that active's value followed by its name in brackets, `
+        + `e.g. "0.18 (${doc.multiAiChoice.toLowerCase()})". Do not list the other actives' rates. `
+        + `If the label gives brackets (e.g. by % organic matter), keep them: "0.045 (<1% OM); 0.067 (≥1% OM)".`
+    });
+  }
   if (stageInstructionText) blocks.push({ type: "text", text: stageInstructionText });
   return blocks;
 }
@@ -678,7 +688,7 @@ function buildAppRows(rawRows, doc, lbPerGal = null) {
     row["Source File"] = doc.fileName;
     row.__source = raw["Evidence"] ? String(raw["Evidence"]) : "";
     row.__derived = {};
-    deriveRateCounts(row, lbPerGal);
+    deriveRateCounts(row, lbPerGal, doc.multiAiChoice);
     row["Confidence"] = scoreRow(row);
     return row;
   });
@@ -706,6 +716,7 @@ function buildAppRows(rawRows, doc, lbPerGal = null) {
 // app/index.html's extractWithLLM (the in-tab path), adapted to report
 // progress into KV instead of a DOM progress bar.
 export async function extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText) {
+  doc.multiAiChoice = chosenActiveForMultiAi(pageMarkedText, doc.selectedAi);
   await assertNotCancelled(env, jobId);
   if (pageMarkedText.length > MAX_CHARS) {
     console.warn(`${doc.fileName} is ${pageMarkedText.length.toLocaleString()} characters — `

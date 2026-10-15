@@ -57,8 +57,8 @@ async function processMessage(env, jobId, fileIndex) {
     return;
   }
 
-  const { fileName, pageMarkedText } = JSON.parse(inputText);
-  const doc = { fileName };
+  const { fileName, pageMarkedText, selectedAi } = JSON.parse(inputText);
+  const doc = { fileName, selectedAi: selectedAi || null };
 
   try {
     await assertNotCancelled(env, jobId);

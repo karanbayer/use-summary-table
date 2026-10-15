@@ -57,8 +57,8 @@ async function processMessage(env, jobId, fileIndex) {
     return;
   }
 
-  const { fileName, pageMarkedText } = JSON.parse(inputText);
-  const doc = { fileName };
+  const { fileName, pageMarkedText, selectedAi } = JSON.parse(inputText);
+  const doc = { fileName, selectedAi: selectedAi || null };
 
   // Job cancelled while this message was still queued — skip without calling
   // the Gateway (cancel API already marks queued files; this covers races).

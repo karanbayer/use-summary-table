@@ -23,6 +23,7 @@ const isEmpty = v => EMPTY.has(String(v ?? "").trim());
 // or the yearly cap taken as the rate). Only for single-active labels, so one
 // concentration applies to every row.
 const SINGLE = "A.I. Max Single Rate/App. (lb a.i./A)";
+const RATE_COLS = ["App Rate (lb ai/A)", SINGLE, COL.cc, COL.yr];
 const PRODUCT_RATE_RE = /(\d+(?:\.\d+)?)(?:\s*(?:[-–]|to)\s*(\d+(?:\.\d+)?))?\s*(fl\.?\s*oz|fluid\s+ounces?|pints?|pt|quarts?|qt|gal(?:lons?)?)\.?\s*(?:product\s*)?(?:\/\s*A\b|per\s+acre)/gi;
 const CAP_RE = /(?:do\s+not\s+apply\s+more\s+than|maximum[^.;]{0,30}?)\s*(\d+(?:\.\d+)?)\s*(fl\.?\s*oz|fluid\s+ounces?|pints?|pt|quarts?|qt|gal(?:lons?)?)/gi;
 const CONC_RES = [
@@ -39,11 +40,57 @@ function flOzPerUnit(unit) {
   return null;
 }
 
+function activeIngredientBox(labelText) {
+  const m = String(labelText || "").match(/ACTIVE\s+INGREDIENTS?(?:\s*\(S\))?\s*:([\s\S]{0,1500}?)OTHER\s+INGREDIENTS?/i);
+  return m ? m[1] : null;
+}
+
+/** The chosen active's name when the label lists 2+ actives and names it; else null. */
+export function chosenActiveForMultiAi(labelText, selectedAi) {
+  const box = activeIngredientBox(labelText);
+  const name = String(selectedAi || "").trim();
+  if (!box || !name || (box.match(/\d+(?:\.\d+)?\s*%/g) || []).length < 2) return null;
+  const key = s => s.toLowerCase().replace(/[^a-z]/g, "");
+  return key(box).includes(key(name)) ? name : null;
+}
+
+// D5.5 — option B safety net: if a rate cell still lists every active
+// ("0.086 SPD; 0.18 FPF"), keep only the chosen one ("0.18 (flupyradifurone)").
+// House abbreviations come from the expert tables (extraction-rules R-3).
+const AI_ABBREV = {
+  icafolinmethyl: ["icm"], indaziflam: ["idf"], flufenacet: ["flu"], spidoxamat: ["spd"],
+  flupyradifurone: ["fpf", "fpd"], bromoxyniloctanoate: ["bxn", "brx"],
+  bromoxynilheptanoate: ["bxn", "brx"], bromoxynil: ["bxn", "brx"]
+};
+function aiTokens(name) {
+  const n = String(name || "").toLowerCase().replace(/[^a-z]/g, "");
+  if (!n) return [];
+  const cons = n.replace(/[aeiou]/g, "");
+  return [...new Set([n, n.slice(0, 6), cons.slice(0, 3), n[0] + cons.slice(1, 3), ...(AI_ABBREV[n] || [])])]
+    .filter(t => t.length >= 3);
+}
+
+export function narrowToActive(cell, activeName) {
+  const s = String(cell ?? "");
+  if (!s.includes(";") || !activeName) return null;
+  const toks = aiTokens(activeName);
+  const hits = s.split(";").map(p => p.trim()).filter(Boolean).filter(p => {
+    const label = p.replace(/[\d.\s\-–()]+/g, " ").toLowerCase().replace(/[^a-z]/g, "");
+    return toks.some(t => label.includes(t) || (label.length >= 3 && t.startsWith(label)));
+  });
+  if (hits.length !== 1) return null;
+  const value = hits[0]
+    .replace(/\(?[A-Za-z][A-Za-z\s-]*\)?\s*$/, "")
+    .replace(/^\(?[A-Za-z][A-Za-z\s-]*\)?\s*/, "")
+    .trim();
+  return /\d/.test(value) ? `${value} (${activeName.toLowerCase()})` : null;
+}
+
 /** lb a.i./gal when the label has exactly one active ingredient and states it; else null. */
 export function singleActiveConcentration(labelText) {
   const text = String(labelText || "");
-  const box = text.match(/ACTIVE\s+INGREDIENTS?(?:\s*\(S\))?\s*:([\s\S]{0,1500}?)OTHER\s+INGREDIENTS?/i);
-  if (!box || (box[1].match(/\d+(?:\.\d+)?\s*%/g) || []).length !== 1) return null;
+  const box = activeIngredientBox(text);
+  if (!box || (box.match(/\d+(?:\.\d+)?\s*%/g) || []).length !== 1) return null;
   for (const re of CONC_RES) {
     const m = text.match(re);
     const v = m ? parseFloat(m[1]) : NaN;
@@ -73,12 +120,19 @@ function deriveSingleRate(row, lbPerGal, put) {
   }
 }
 
-export function deriveRateCounts(row, lbPerGal = null) {
+export function deriveRateCounts(row, lbPerGal = null, chosenActive = null) {
   if (!row.__derived || typeof row.__derived !== "object") row.__derived = {};
   const put = (col, value, rule) => {
     row[col] = value;
     row.__derived[col] = rule;
   };
+
+  if (chosenActive) {
+    for (const col of RATE_COLS) {
+      const narrowed = narrowToActive(row[col], chosenActive);
+      if (narrowed) put(col, narrowed, "D5.5-chosen-active");
+    }
+  }
 
   deriveSingleRate(row, lbPerGal, put);
 
