@@ -193,6 +193,13 @@ Measured on the five labels with ground truth (2026-10-15): every derived cell m
 expert table except six Plenexos cells, where the value was right but its multi-ingredient
 format (`0.172 SPD; 0.36 FPF`) differs from the table's (`0.36`).
 
+**D5.6 — one application per crop cycle.** When `Max Single Rate` equals the per-crop-cycle
+cap (within 3%), a single application uses the whole cap, so `Max # Apps/C.C.` = `1` and
+`Max # Apps/Yr.` = `Max No. of CC/yr`. This is the expert's rule: Sivanto 400 SL brassica
+soil (0.365 single, 0.365 per season, 3 seasons/yr) is 1 per cycle and 3 per year, while
+the foliar row (0.183 single) stays `NS` because the label states no count. Right on 20 of
+20 checkable cells.
+
 **Method columns, also enforced in code (2026-10-15):**
 
 | # | Evidence | Value |

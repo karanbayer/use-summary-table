@@ -515,6 +515,49 @@ sentence. Only write `NS` when the label names no equipment for the use at all.
 
 ---
 
+## R-28 · Restriction columns carry the enforceable limits, in the expert's format
+
+The restriction columns are not a place to quote every sentence near the topic. Each one
+takes the **mandatory** limits for its subject ("DO NOT", "must", "only", a number), and
+leaves out general advice ("Use larger droplets in hot, dry conditions…") and spray-volume
+or calibration text. When a label repeats a limit, record it once.
+
+**Drift Restrictions** — one line per limit, in this order, only those the label states:
+
+```
+Wind speed limit (mph): 15 mph.
+Buffers for <crop/use> (ft): Aerial 85-115; Airblast/ Ground 50-60
+Max Release Height (ft): 10
+ASABE Droplet Size: Coarse or Coarser
+```
+
+Plus any outright method ban as written ("DO NOT apply by aerial equipment or
+chemigation."). Minimum application volume is **not** a drift restriction — leave it out.
+
+**Soil Restrictions** — excluded soils, placement depth, incorporation, settled-soil
+conditions, copied as written: `DO NOT use in sand. DO NOT use on soils with 20% or greater
+gravel content.` / `For Injection: Place 3-4 inches below seed line`.
+
+**On-field Non-target Species Restrictions** — pollinator and other on-field limits. Start
+the label's general pollinator advice with `Pollinators:` and add any crop-specific
+prohibition: `Pollinators: recommended that foliar insecticides are applied late in the
+afternoon, evening, or at night outside of daily peak foraging periods. Do not apply to crop
+foliage during foraging by alfalfa leafcutting bees used for pollination services.` Toxicity
+statements ("Highly toxic to adult …") are hazard text, not a restriction — leave them out.
+
+**Additional Information** — the use-specific directions that other columns don't hold:
+the product rate and its basis (`Apply 2.8 to 5.8 fl oz/A as directed spray…`), the stated
+caps in product units, minimum plant age, planthouse/tray instructions. Never write a
+placeholder such as "Rate not separately stated…; refer to …" — quote the rate the label
+gives for this use, or `NS`.
+
+**Mistake logged (2026-10-15):** drift cells held minimum-volume and calibration text
+instead of the four limits above (Plenexos, Sivanto); a pollinator cell led with the
+toxicity statement; Indaziflam replant rows wrote "Rate not separately stated" where the
+label states the rate.
+
+---
+
 ## R-24 · Per-application ceiling and annual cap are separate label sentences
 
 `A.I. Max Single Rate/App.` and `A.I. Max Total Rate/Yr.` (or any stated 12-month/annual
@@ -601,6 +644,8 @@ Before releasing a table:
       only *adds* a method (not contradicts one) is still carried per R-20 (**R-23**)
 - [ ] App. Equipment is the label's own sentence, copied verbatim — not `Ground; Aerial`
       (**R-27**)
+- [ ] Restriction columns hold the mandatory limits in R-28's format — drift as wind /
+      buffers / release height / droplet size, no volume or calibration advice (**R-28**)
 - [ ] Per-application ceiling and annual cap each traced to their own label sentence, never
       cross-populated (**R-24**)
 - [ ] Every crop named anywhere in the document — including inside another group's shared

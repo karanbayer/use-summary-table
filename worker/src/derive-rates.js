@@ -155,6 +155,25 @@ function deriveMethod(row, facts, put) {
   }
 }
 
+// A single plain number ("0.365", "0.365 (14 fl oz/A)"); null for ranges and per-active lists.
+function plainNumber(v) {
+  const s = String(v ?? "").split("(")[0];
+  if (s.includes(";") || /\d\s*[-–]\s*\d/.test(s)) return null;
+  const nums = s.match(/\d+(?:\.\d+)?/g);
+  return nums && nums.length === 1 ? parseFloat(nums[0]) : null;
+}
+
+// D5.6 — when one application uses the whole crop-cycle cap, the cycle allows exactly one
+// application, and the year allows one per crop cycle.
+function deriveOneAppPerCycle(row, put) {
+  const single = plainNumber(row[SINGLE]);
+  const cap = plainNumber(row[COL.cc]);
+  if (!single || !cap || Math.abs(single - cap) / cap > 0.03) return;
+  if (isEmpty(row[COL.nCC])) put(COL.nCC, "1", "D5.6-one-app-per-cycle");
+  const cycles = plainNumber(row[COL.ccyr]);
+  if (cycles && Number.isInteger(cycles) && isEmpty(row[COL.nYr])) put(COL.nYr, String(cycles), "D5.6-one-app-per-cycle");
+}
+
 export function deriveRateCounts(row, lbPerGal = null, chosenActive = null, methodFacts = null) {
   if (!row.__derived || typeof row.__derived !== "object") row.__derived = {};
   const put = (col, value, rule) => {
@@ -192,5 +211,7 @@ export function deriveRateCounts(row, lbPerGal = null, chosenActive = null, meth
       else if (isEmpty(row[yr]) && !isEmpty(row[cc])) put(yr, row[cc], "D5.3-cascade");
     }
   }
+
+  deriveOneAppPerCycle(row, put);
   return row;
 }
