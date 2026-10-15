@@ -99,8 +99,32 @@ export function singleActiveConcentration(labelText) {
   return null;
 }
 
-function deriveSingleRate(row, lbPerGal, put) {
+const lbAiText = v => String(Math.round(v * 1000) / 1000);
+
+// Herbicides keep the stated range (R-18), so only fill a blank cell, converting the
+// product range as a range: "2.0 to 3.75 fl oz/A" at 1.67 lb/gal -> "0.026 to 0.049".
+function fillHerbicideRateRange(row, lbPerGal, put) {
+  for (const col of ["App Rate (lb ai/A)", SINGLE]) {
+    const current = String(row[col] ?? "");
+    if (!isEmpty(current.split("(")[0])) continue;
+    const m = [...current.matchAll(PRODUCT_RATE_RE)];
+    if (m.length !== 1) continue;
+    const per = flOzPerUnit(m[0][3]);
+    if (!per) continue;
+    const lo = parseFloat(m[0][1]) * per * lbPerGal / 128;
+    const hi = m[0][2] ? parseFloat(m[0][2]) * per * lbPerGal / 128 : null;
+    put(col, hi ? `${lbAiText(lo)} to ${lbAiText(hi)}` : lbAiText(lo), "D5.4-herbicide-range");
+  }
+  // Herbicide Max Single Rate is the stated range (R-18), i.e. the same value as App Rate.
+  const app = String(row["App Rate (lb ai/A)"] ?? "");
+  if (isEmpty(String(row[SINGLE] ?? "").split("(")[0]) && /\d/.test(app) && !isEmpty(app.split("(")[0])) {
+    put(SINGLE, app, "D5.4-herbicide-range");
+  }
+}
+
+function deriveSingleRate(row, lbPerGal, put, kind) {
   if (!lbPerGal) return;
+  if (kind === "herbicide") return fillHerbicideRateRange(row, lbPerGal, put);
   const current = String(row[SINGLE] ?? "").trim();
   if (current.includes(";")) return;
   const rates = [...String(row["App Rate (lb ai/A)"] ?? "").matchAll(PRODUCT_RATE_RE)]
@@ -188,9 +212,7 @@ export function deriveRateCounts(row, lbPerGal = null, chosenActive = null, meth
     }
   }
 
-  // Herbicide labels keep the stated range in Max Single Rate (R-18), so the
-  // top-of-range conversion only applies to other product types.
-  if (methodFacts?.kind !== "herbicide") deriveSingleRate(row, lbPerGal, put);
+  deriveSingleRate(row, lbPerGal, put, methodFacts?.kind);
   deriveMethod(row, methodFacts, put);
 
   // D5.2 — a seed treatment is one application on one crop cycle.
