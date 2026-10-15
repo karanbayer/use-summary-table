@@ -120,7 +120,42 @@ function deriveSingleRate(row, lbPerGal, put) {
   }
 }
 
-export function deriveRateCounts(row, lbPerGal = null, chosenActive = null) {
+// D2.10 / D2.1 / D3.10 — method columns. Label-level facts are read once per file.
+const FOLIAR_EQUIP_RE = /(?:applied|apply)\s+as\s+a\s+foliar\s+application\s+using\s+(?:properly\s+calibrated\s+)?(.{0,200}?equipment)/i;
+const SUMMARY_EQUIP_RE = /^\s*(?:ground|aerial|air)\b[\s;,/&]*(?:and\s+|or\s+)?(?:ground|aerial|air)?\s*$/i;
+const PLANTHOUSE_RE = /planthouse|tray|transplant|potting/i;
+
+export function labelMethodFacts(labelText) {
+  const text = String(labelText || "").replace(/\s+/g, " ");
+  const head = text.slice(0, 4000);
+  const foliar = text.match(FOLIAR_EQUIP_RE);
+  const kind = /\bherbicide\b/i.test(head) ? "herbicide"
+    : /\b(?:insecticide|miticide)\b/i.test(head) ? "insecticide" : null;
+  return { foliarEquipment: foliar ? foliar[1].trim() : null, kind };
+}
+
+function deriveMethod(row, facts, put) {
+  if (!facts) return;
+  const target = String(row["App. Target"] ?? "");
+  const foliar = /foliar/i.test(target);
+  const planthouse = PLANTHOUSE_RE.test(`${row["Use Site"] ?? ""} ${target} ${row["App. Timing (Site Status)"] ?? ""}`);
+  const equip = String(row["App. Equipment"] ?? "");
+
+  if (foliar && !planthouse && facts.foliarEquipment && (isEmpty(equip) || SUMMARY_EQUIP_RE.test(equip))) {
+    put("App. Equipment", facts.foliarEquipment, "D2.10-label-equipment");
+  }
+  if (foliar && isEmpty(row["App. Type"]) && /ground|aircraft|aerial|boom|sprayer/i.test(String(row["App. Equipment"] ?? ""))) {
+    put("App. Type", "Broadcast", "D2.1-broadcast");
+  }
+  if (isEmpty(row["App. Timing (other)"])) {
+    const value = /seed/i.test(target) ? "Treatment of seed"
+      : facts.kind === "insecticide" ? "When pests occur"
+      : facts.kind === "herbicide" ? "When weeds germinate" : null;
+    if (value) put("App. Timing (other)", value, "D3.10-default");
+  }
+}
+
+export function deriveRateCounts(row, lbPerGal = null, chosenActive = null, methodFacts = null) {
   if (!row.__derived || typeof row.__derived !== "object") row.__derived = {};
   const put = (col, value, rule) => {
     row[col] = value;
@@ -135,6 +170,7 @@ export function deriveRateCounts(row, lbPerGal = null, chosenActive = null) {
   }
 
   deriveSingleRate(row, lbPerGal, put);
+  deriveMethod(row, methodFacts, put);
 
   // D5.2 — a seed treatment is one application on one crop cycle.
   if (/seed/i.test(String(row[COL.target] ?? ""))) {

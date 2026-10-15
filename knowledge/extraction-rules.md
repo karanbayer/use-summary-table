@@ -495,6 +495,26 @@ was misread as blocking the supplementary sentence rather than adding to it.
 
 ---
 
+## R-27 · App. Equipment is copied verbatim, never summarised
+
+Copy the label's own equipment sentence into App. Equipment word for word. Do not reduce
+it to a category list.
+
+| Label says | Wrong | Right |
+|---|---|---|
+| "applied as a foliar application using properly calibrated ground sprayers, fixed or rotary winged aircraft, or through properly designed, sprinkler-type overhead chemigation equipment" | `Ground; Aerial` | `ground sprayers, fixed or rotary winged aircraft, or through properly designed, sprinkler-type overhead chemigation equipment` |
+| "Airblast sprayer or similar ground equipment, fixed or rotary winged aircraft" | `Ground, Aerial` | `Airblast sprayer or similar ground equipment, fixed or rotary winged aircraft` |
+| "Chemigation into root zone through low-pressure drip, trickle, micro-sprinkler or equivalent equipment" | `NS` | `Chemigation low-pressure drip, trickle, micro-sprinkler or equiv. equipment` |
+
+Where a row combines several methods, join each method's own wording with `; `. Planthouse
+rows (tray drench before transplanting) use their own planthouse instructions, not the field
+sentence. Only write `NS` when the label names no equipment for the use at all.
+
+**Mistake logged (2026-10-15):** on Sivanto 200 SL and 400 SL, 56 rows had
+`Ground; Aerial` where the expert table quotes the label's sentence above.
+
+---
+
 ## R-24 · Per-application ceiling and annual cap are separate label sentences
 
 `A.I. Max Single Rate/App.` and `A.I. Max Total Rate/Yr.` (or any stated 12-month/annual
@@ -579,6 +599,8 @@ Before releasing a table:
 - [ ] App. Type/Target/Equipment traced to the crop's own section, not borrowed from a
       shared sentence or a section heading elsewhere in the document; a shared sentence that
       only *adds* a method (not contradicts one) is still carried per R-20 (**R-23**)
+- [ ] App. Equipment is the label's own sentence, copied verbatim — not `Ground; Aerial`
+      (**R-27**)
 - [ ] Per-application ceiling and annual cap each traced to their own label sentence, never
       cross-populated (**R-24**)
 - [ ] Every crop named anywhere in the document — including inside another group's shared

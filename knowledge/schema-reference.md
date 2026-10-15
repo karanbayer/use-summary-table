@@ -51,7 +51,7 @@ Order matters — exports are written in exactly this sequence.
 |---|---|---|
 | 7 | **App. Target** | Foliar, soil, seed treatment |
 | 8 | **App. Type** | Broadcast, banded, soil drench, etc. |
-| 9 | **App. Equipment** | Aerial, ground boom, boomless ground, handheld, airblast |
+| 9 | **App. Equipment** | The label's own equipment wording, copied verbatim — never shortened to "Ground; Aerial" (see extraction-rules R-27) |
 | 10 | **App. Timing (Site Status)** | Pre- or post- (crop) emergent |
 | 11 | **App. Timing (other)** | Timing dependent on pest pressure or another condition |
 

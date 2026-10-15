@@ -193,6 +193,17 @@ Measured on the five labels with ground truth (2026-10-15): every derived cell m
 expert table except six Plenexos cells, where the value was right but its multi-ingredient
 format (`0.172 SPD; 0.36 FPF`) differs from the table's (`0.36`).
 
+**Method columns, also enforced in code (2026-10-15):**
+
+| # | Evidence | Value |
+|---|---|---|
+| D2.10 | Foliar row, not planthouse/tray/transplant, equipment is `NS` or only "Ground; Aerial", and the label states "applied as a foliar application using … equipment" | that equipment sentence, verbatim (extraction-rules R-27) |
+| D2.1 | Foliar row with ground/aircraft/boom/sprayer equipment and `App. Type` `NS` | `Broadcast` |
+| D3.10 | `App. Timing (other)` `NS` | `Treatment of seed` for seed treatments; else `When pests occur` (insecticide) or `When weeds germinate` (herbicide), from the label's product type |
+
+On the five labels with ground truth these took the method columns from 43% to 81%;
+D2.10 was right on 63 of 63 checkable cells once planthouse rows were excluded.
+
 **D4.1 is not enforced in code.** Deriving a count as total cap ÷ single rate was wrong on
 about a quarter of the cells it could be checked against, mostly because the model had put
 the wrong figure in the single-rate cell. Requiring the quotient to be a whole number did not
