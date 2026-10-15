@@ -21,6 +21,22 @@ defect.
 
 **Rule:** if a crop has both a foliar and a soil application, that is two rows. Do not merge.
 
+**A heading that lists several uses is several rows.** When one section heading names
+distinct uses ("ORNAMENTALS, CHRISTMAS TREES, AND CONIFER PLANTATIONS"), give each named use
+its own row, and split a use into its stated settings when the section treats them
+differently. Indaziflam 200 SC's ornamentals section becomes four rows:
+
+| Use | Why it is its own row |
+|---|---|
+| Ornamentals (Landscape) | landscape beds, hedgerows |
+| Ornamentals (Production Nursery) | nursery beds; "DO NOT apply to newly rooted cuttings/or seedling beds" |
+| Christmas Trees | Christmas tree farms (also the separate "CONIFERS AND CHRISTMAS TREES" section) |
+| Conifer Plantations | conifer plantations / conifer nurseries |
+
+Each row repeats the shared rates and restrictions and adds what the section says only for
+that use. One combined "ORNAMENTALS (landscape ornamentals, hedgerows, production…)" row
+loses three of the four uses.
+
 ---
 
 ## R-2 · Purpose drives the schema
@@ -645,6 +661,12 @@ crop group's sentence rather than given its own heading — that crop gets its o
 **Mistake logged:** Indaziflam extraction named pecan only inside the Pome/Stone
 Fruit/Subgroup-23A group's shared 3-year-establishment sentence and never gave it a
 standalone row.
+
+**Open question for reviewers (2026-10-15):** the Indaziflam 200 SC expert table does give
+pecan its own row ("Tree Nuts (Pecan)"), but has no olive row, although the model also made
+one from a passing mention in the restrictions. Until reviewers decide, keep this rule: a
+crop named with its own use pattern (rate, interval or establishment period) gets a row; a
+crop named only in a list of exclusions or examples does not.
 
 ---
 
