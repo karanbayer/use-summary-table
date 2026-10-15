@@ -42,6 +42,10 @@ GT_TO_APP = {
     _norm_col("Max # Apps / Yr."):                     _norm_col("Max # Apps/Yr."),
     _norm_col("A. I. Max Total Rate / Yr. (lb a.i./A)"): _norm_col("A.I. Max Total Rate/Yr. (lb a.i./A)"),
     _norm_col("MRI (days)"):                           _norm_col("MRI (days)"),
+    # Spellings used by the Indaziflam 200SC UST workbook (Nancy's 35-row version).
+    _norm_col("Physical Form."):                       _norm_col("Physical Form"),
+    _norm_col("A. I. Max Total Rate / C.C. (lb a.i./A)"): _norm_col("A.I. Max Total Rate/C.C. (lb a.i./A)"),
+    _norm_col("Minimum Retreatment Interval"):         _norm_col("MRI (days)"),
 }
 
 # Columns in the ground truth that have no counterpart in the app schema (skip scoring)
@@ -256,10 +260,17 @@ def _fields_match(gt_val: str, app_val: str, col: str = "") -> bool:
     # Same equivalence row matching uses ("Foliage/Plant" = "Foliar").
     if col == "app. target":
         return _norm_target(gt_val) == _norm_target(app_val)
-    # PPE is a list; "a; b; c" and "a, b, c" are the same items.
+    # PPE is a list; "a; b; c" and "a, b, c" are the same items, with or without the
+    # label's "All mixers, loaders, applicators and other handlers must wear:" lead-in.
     if col == "ppe":
-        items = lambda v: {re.sub(r"[^a-z ]", "", p).strip() for p in re.split(r"[;,\n]", str(v).lower()) if p.strip()}
+        strip_lead = lambda v: re.sub(r"(?is)^.*?\bmust\s+wear\s*:", "", str(v))
+        items = lambda v: {re.sub(r"[^a-z ]", "", p).strip() for p in re.split(r"[;,\n]", strip_lead(v).lower()) if p.strip()}
         return items(gt_val) == items(app_val)
+    # App Rate is a rate like the other lb a.i./A columns, often bracketed by OM.
+    if col == _norm_col("App Rate (lb ai/A)"):
+        nums = lambda v: re.findall(r"\d+(?:\.\d+)?", re.sub(r"[<>≥≤]=?\s*\d+(?:\.\d+)?\s*%|\d+\s*-\s*\d+\s*%", "", str(v)))
+        g, a = nums(gt_val), nums(app_val)
+        return bool(g) and len(g) == len(a) and all(abs(float(x) - float(y)) <= 0.05 * max(float(x), float(y), 1e-9) for x, y in zip(g, a))
     if col in _JACCARD_COLS:
         # Pass field name to Jaccard for field-specific normalization
         jaccard_sim = _jaccard(gt_val, app_val, col)
