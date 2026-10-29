@@ -1,17 +1,97 @@
 name: Deploy to Agentrix
 
+# Prerequisites
+# 1. Add a GitHub Actions secret named AGENTRIX_PAT.
+# 2. The PAT must include scope deploy:agent and be limited to this project
+#    (PROJECT_ID below). Create/rotate it in Agentrix → Token management.
+# 3. Confirm PROJECT_ID / AGENT_ID / AGENT_NAME match this agent before first run.
+#
+# Push to the branch below (or use workflow_dispatch) to redeploy.
+# Runtime branch_name is taken from github.ref_name.
+#
+# A redeploy restarts the pod, and extraction jobs live in memory (DEPLOYMENT.md): a job running at that moment is
+# lost. Push when no one is extracting, or use workflow_dispatch at a quiet time.
+
 on:
   push:
     branches: [main]
+    # Docs and tests do not change the app: no deploy for them.
     paths-ignore:
       - "**.md"
+      - "docs/**"
+      - "specs/**"
       - "tests/**"
+  workflow_dispatch:
 
 jobs:
   deploy:
-    uses: bayer-int/PH-agentops-build-deploy-pipeline/.github/workflows/agent-build-push.yml@main
+    if: github.repository_owner == 'bayer-int'  # copies elsewhere do not deploy
+    runs-on: ubuntu-latest
     permissions:
-      id-token: write
       contents: read
-    with:
-      agent_name: "agent-27163dcf"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Redeploy agent
+        env:
+          AGENTRIX_PAT: ${{ secrets.AGENTRIX_PAT }}
+          API_BASE: "https://api.agentrix.int.bayer.ai"
+          PROJECT_ID: "prj-ff9f7094"
+          AGENT_ID: "agent-27163dcf"
+          AGENT_NAME: "use-summary-table-extractor"
+          DEFAULT_VERSION: "1.0.19"
+        run: |
+          set -euo pipefail
+
+          # Resolve version from repo (first match wins), else DEFAULT_VERSION
+          VERSION=""
+
+          # 1) VERSION file at repo root: contents like 1.2.3
+          if [[ -f VERSION ]]; then
+            VERSION=$(tr -d '[:space:]' < VERSION)
+          fi
+
+          # 2) Dockerfile: LABEL version="1.2.3"  or  LABEL version=1.2.3
+          if [[ -z "$VERSION" && -f Dockerfile ]]; then
+            VERSION=$(grep -E '^[[:space:]]*LABEL[[:space:]]+version=' Dockerfile \
+              | head -n1 \
+              | sed -E 's/.*version=//; s/["'\'']//g; s/[[:space:]].*$//; s/\r$//' \
+              || true)
+          fi
+
+          # 3) Dockerfile: ARG VERSION=1.2.3  or  ENV VERSION=1.2.3
+          if [[ -z "$VERSION" && -f Dockerfile ]]; then
+            VERSION=$(grep -E '^[[:space:]]*(ARG|ENV)[[:space:]]+VERSION=' Dockerfile \
+              | head -n1 \
+              | sed -E 's/.*VERSION=//; s/["'\'']//g; s/[[:space:]].*$//; s/\r$//' \
+              || true)
+          fi
+
+          # 4) Every deploy needs a higher version than the last, or Agentrix builds from its cache (Eswar, 29 Oct):
+          #    1.1.<GitHub run number> is new on every run, and above the manual deploys' 1.0.x.
+          if [[ -z "$VERSION" && -n "${GITHUB_RUN_NUMBER:-}" ]]; then
+            VERSION="1.1.${GITHUB_RUN_NUMBER}"
+          fi
+
+          VERSION="${VERSION:-$DEFAULT_VERSION}"
+          echo "Using version=${VERSION}"
+
+          curl -sS -f -X POST "${API_BASE}/api/agents/deploy" \
+            -H "Content-Type: application/json" \
+            -H "Agentrix-Pat: ${AGENTRIX_PAT}" \
+            -d "$(jq -n \
+              --arg project_id "$PROJECT_ID" \
+              --arg existing_agent_id "$AGENT_ID" \
+              --arg name "$AGENT_NAME" \
+              --arg repo_url "${{ github.server_url }}/${{ github.repository }}.git" \
+              --arg branch_name "${{ github.ref_name }}" \
+              --arg version "$VERSION" \
+              '{
+                project_id: $project_id,
+                existing_agent_id: $existing_agent_id,
+                name: $name,
+                repo_url: $repo_url,
+                branch_name: $branch_name,
+                version: $version
+              }')"
