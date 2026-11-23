@@ -5,7 +5,7 @@ and how to set up a new app the same way. **No secret values are in this file** 
 safe to share inside Bayer. Secrets live in Agentrix (and in the owner's local `.dev.vars`, never in git or chat).
 
 Owner until handover: Karandeep Singh (karandeep.singh@bayer.com), Life Sciences Regulatory.
-Last updated: 18 Oct 2026.
+Last updated: 23 Nov 2026 (Agentrix stages: section 6).
 
 ---
 
@@ -15,6 +15,7 @@ Last updated: 18 Oct 2026.
 |---|---|---|
 | What it does | Extracts EPA label PDFs into the 28-column Use Summary Table; human review | Advisory QC of Quill → AgriGuide digital labels against the golden Word/PDF; never publishes |
 | Live URL (Bayer network/VPN) | https://use-summary-table-extractor.agent.agentrix.int.bayer.ai/ | https://agriguide-qc.agent.agentrix.int.bayer.ai/ |
+| Stages (since Nov 2026) | Development `https://use-summary-table-extractor-dev.agent.agentrix.int.bayer.ai/`, QA `…-qa…`, Production = Live URL. Check the agent page shows the stages before the next release | Development https://agriguide-qc-dev.agent.agentrix.int.bayer.ai/, QA https://agriguide-qc-qa.agent.agentrix.int.bayer.ai/, Production = Live URL |
 | Agentrix project | https://agentrix.int.bayer.ai/projects/prj-ff9f7094 | "Agriguide QC Assistant" — https://agentrix.int.bayer.ai/projects/prj-11265a61 |
 | Agentrix agent | `use-summary-table-extractor` (id `agent-27163dcf`) | `agriguide-qc` (id shown in Agentrix → agent → Security) |
 | GitHub (code that is deployed) | https://github.com/bayer-int/use-summary-table (Internal) | https://github.com/bayer-int/agriguide-qc-assistant (Internal) |
@@ -190,6 +191,8 @@ Expect the identity steps (1–4) to take days to weeks because of approvals; st
      note the expiry), leave `AGENT_ID` and `OTEL_EXPORTER_OTLP_ENDPOINT` as filled in, then add
      `AZURE_CLIENT_SECRET` and the app's other variables.
    - Deploy (≈3 min): Queued → Clone → Code Scan → Build Image → Push to Registry → Deploy to Cluster.
+     The first deploy goes to Development (`https://<name>-dev.agent.agentrix.int.bayer.ai/`); promote it to QA and
+     Production for users (section 6, "Stages").
 10. **Verify** on VPN: `/health` → `{"ok":true,...}`, open `/`, run one real case end to end.
 ---
 
@@ -197,12 +200,33 @@ Expect the identity steps (1–4) to take days to weeks because of approvals; st
 
 | Task | How |
 |---|---|
-| Deploy a code change | Push to `main` in the bayer-int repo, then Agentrix → agent → **Deploy** (≈3 min). Auto-Deploy is not working yet (section 8). |
-| Change a secret / variable | Agentrix → agent → secrets editor (blank value = keep current) → save → **redeploy** so the pod picks it up. |
+| Deploy a code change | Push to `main` in the bayer-int repo. The GitHub workflow (Auto-Deploy) deploys it to the **Development** stage only (≈5 min); the **Deploy** button in Agentrix does the same. Check it on the `-dev` address, then Agentrix → agent → **Promote to QA** → **Promote to Prod**. Users see it only after the promotion to Production (see "Stages" below). |
+| Change a secret / variable | Agentrix → agent → secrets editor (blank value = keep current) → save → **redeploy** so the pod picks it up. Secrets are per stage (Development, QA, Production). |
 | Check it's alive | `https://<agent>.agent.agentrix.int.bayer.ai/health` on VPN. First hit after idle can take 30–60 s (scale to zero). |
 | Logs | Agentrix → agent → deployment / pipeline runs → View logs; app audit lines are JSON (metadata only, no label text). |
 | Pause AI use (kill switch) | Set `KILL_SWITCH_ENABLED=true` and `KILL_SWITCH_REASON=...` on the agent, redeploy. Remove to re-enable. |
 | Spending | App caps: `DAILY_BUDGET_USD` (100) and `RATE_LIMIT_PER_MINUTE` (20) per app. Overall: virtual account budget in the AI Gateway portal (shared by both apps). |
+
+### Stages: Development → QA → Production
+
+Since 20 Nov 2026 Agentrix runs every agent in three stages, each with its own address, namespace and secrets:
+`https://<agent>-dev.agent.agentrix.int.bayer.ai/` (Development), `https://<agent>-qa.agent.agentrix.int.bayer.ai/` (QA)
+and `https://<agent>.agent.agentrix.int.bayer.ai/` (Production, the address users open). A deploy, from the GitHub
+workflow or the **Deploy** button, updates Development only. The agent page may then show the new version as
+"Deployed / Active" while Production still runs the old one, so check the Production address, not the badge.
+
+To release:
+1. Check the change on the `-dev` address.
+2. Agentrix → agent → **Promote to QA**, then **Promote to Prod**. Both use the same image and take about 20 s each.
+3. Each dialog checks that the target stage has all secrets; the first time, use **Copy from Development**. Keep
+   Visibility **Private** unless the app should be listed on AgentHub, and tick "Unite cybersecurity review confirmed"
+   only if a review was really done.
+4. Open the Production address and hard-refresh (Cmd+Shift+R).
+
+A secret or variable changed in one stage is not changed in the others. Agentrix (Eswar CL, 23 Nov 2026): the stages
+are intended, so every deploy can be checked before Production; a pre-check that allows promoting straight to
+Production may follow. The app owner can promote without Agentrix help (first done for AgriGuide QC 1.2.79,
+23 Nov 2026).
 
 ### Things that expire — put them in a calendar
 
@@ -252,7 +276,9 @@ extraction, then delete the four old tokens. Deleting a token blindly can break 
 | Browser: Skyhigh "SSL handshake failed" on the new URL | Service/cert not ready yet, or not on VPN | Wait a few minutes after first deploy, use VPN. |
 | Agent shows "Runtime: Registered", no secrets editor | Created with **Register an agent** | Delete it; create with **Deploy an agent**. |
 | "An agent named … already exists" after deleting it | Name stays reserved for a while | Pick another name (AgriGuide: `agriguide-qc`). |
-| GitHub Action "Deploy to Agentrix" fails in 0 s: `bayer-int/PH-agentops-build-deploy-pipeline/…agent-build-push.yml@main … workflow was not found` | Our repos have no access to the shared pipeline repo | Deploy from the Agentrix UI. Ask the Agentrix team to grant the repos access; the existing `deploy.yml` then works unchanged. |
+| GitHub Action "Deploy to Agentrix" fails in 0 s: `bayer-int/PH-agentops-build-deploy-pipeline/…agent-build-push.yml@main … workflow was not found` | Our repos had no access to the shared pipeline repo | **Resolved — Auto-Deploy works.** If it fails again, deploy from the Agentrix UI and ask the Agentrix team (Luis Angelico) to check the repos' access to the pipeline. |
+| A deploy succeeded (new version "Deployed / Active") but users still see the old app | Since 20 Nov 2026 deploys land in the Development stage (`<agent>-dev.agent…`); Production changes only through promotion | **Promote to QA** → **Promote to Prod** (section 6, "Stages"). Not a pipeline fault; nothing to change in `deploy.yml`. |
+| Empty 404 after sign-in; Runtime logs say "No resources found in agents namespace" | That stage has nothing deployed yet (for example QA or Production before the first promotion) | Use the `-dev` address, or promote first. |
 | `git push` rejected: OAuth app lacks `workflow` scope | HTTPS token can't change `.github/workflows` | Push over SSH, or `gh auth refresh -s workflow`. |
 | App says "Daily AI budget exceeded" | App's own `DAILY_BUDGET_USD` reached | Wait until tomorrow (UTC) or raise the variable and redeploy. |
 | Long batches drop ("stream dropped", 429/502) on UST | Long streaming calls through proxies; Gateway rate limits | UST retries with backoff and splits big labels; run one label at a time on Agentrix. |

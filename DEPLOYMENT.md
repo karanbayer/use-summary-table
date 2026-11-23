@@ -59,6 +59,22 @@ The container must reach `login.microsoftonline.com` and the AI Gateway host fro
 6. Open the app URL → **Run in background** should be visible → upload → confirm you can
    close the tab and reopen `?job=<id>` for progress.
 
+### Stages: Development → QA → Production (since Nov 2026)
+
+Agentrix runs every agent in three stages, each with its own address and secrets:
+`https://use-summary-table-extractor-dev.agent.agentrix.int.bayer.ai/` (Development),
+`…-qa.agent.agentrix.int.bayer.ai/` (QA) and `https://use-summary-table-extractor.agent.agentrix.int.bayer.ai/`
+(Production, what Nancy's team opens). A push to `main` (`.github/workflows/deploy.yml`) or the **Deploy** button
+updates **Development only**; the agent page may show the new version as "Deployed / Active" while Production still
+runs the old one.
+
+To release: check the change on the `-dev` address → Agentrix → agent → **Promote to QA** → **Promote to Prod**
+(same image, ~20 s each). Each dialog checks that the target stage has every secret above (first time: **Copy from
+Development**); keep Visibility **Private**. Secrets set on one stage do not carry over to the others; each stage is its own
+Knative service, so check with Agentrix that `minScale: 1` is set on Production too.
+Agentrix (Eswar CL, 23 Nov 2026): intended, so every deploy can be checked before Production; a pre-check that allows
+promoting straight to Production may follow. Full steps: `docs/platform-handover.md` section 6, "Stages".
+
 ### Local smoke test (optional)
 
 ```bash
