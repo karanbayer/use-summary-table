@@ -2,7 +2,7 @@
   "_comment": "Governance descriptor for Bayer's AI Pre-Flight checklist ('Create the Agent Card') and any future Agent Hub registration decision. Loosely modeled on the A2A Agent Card shape (name/description/provider/capabilities/skills), but this tool does not run a live A2A JSON-RPC endpoint or serve this file at /.well-known/agent.json — see discoverability.note below.",
   "name": "use-summary-table-extractor",
   "displayName": "Use Summary Tables Extractor",
-  "version": "0.1.0-pilot",
+  "version": "1.1.42",
   "status": "pilot",
   "lastReviewed": "2026-09-08",
   "description": "Extracts a structured, schema-compliant Use Summary Table (28 columns) from a single pesticide product-label PDF, for EPA submission. Task-based, not process- or goal-based: one document type in, one table out, no open-ended planning or autonomous action beyond that single extraction task.",

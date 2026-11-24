@@ -375,7 +375,7 @@ const server = http.createServer(async (req, res) => {
     const reqPath = url.pathname.replace(/\/+$/, "") || "/";
 
     if (req.method === "GET" && (reqPath === "/health" || reqPath === "/api/health")) {
-      return json(res, 200, { ok: true, runtime: "agentrix" });
+      return json(res, 200, { ok: true, runtime: "agentrix", version: process.env.AGENT_VERSION || null });
     }
 
     if (req.method === "GET" && (reqPath === "/mcp" || reqPath === "/mcp/")) {

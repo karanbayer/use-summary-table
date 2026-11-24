@@ -75,6 +75,12 @@ Knative service, so check with Agentrix that `minScale: 1` is set on Production 
 Agentrix (Eswar CL, 23 Nov 2026): intended, so every deploy can be checked before Production; a pre-check that allows
 promoting straight to Production may follow. Full steps: `docs/platform-handover.md` section 6, "Stages".
 
+**One version.** The Dockerfile (`LABEL version`, `ENV AGENT_VERSION`), `agent-card.json` and `agenthub-agent.yaml`
+carry the app's version; the workflow raises it by one on each deploy (`scripts/bump_version.py`), commits "Release
+x.y.z [skip ci]" and deploys with it, and `/health` reports it. After a deploy, `git pull` before your next push. To
+redeploy without a code change, use GitHub → Actions → **Deploy to Agentrix** → **Run workflow**, not the Agentrix
+Deploy button (it does not raise the version). Because a deploy restarts the pod, run it when no one is extracting.
+
 ### Local smoke test (optional)
 
 ```bash

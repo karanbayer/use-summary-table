@@ -3,6 +3,9 @@
 # Soft-async knowledge JSON is baked into server/lib/ (root .dockerignore excludes knowledge/).
 
 FROM node:22-alpine
+# The app\'s one version (scripts/bump_version.py): the deploy workflow raises both lines and deploys with it.
+LABEL version="1.1.42"
+ENV AGENT_VERSION=1.1.42
 
 RUN apk add --no-cache wget
 

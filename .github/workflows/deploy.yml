@@ -6,7 +6,9 @@ name: Deploy to Agentrix
 #    (PROJECT_ID below). Create/rotate it in Agentrix → Token management.
 # 3. Confirm PROJECT_ID / AGENT_ID / AGENT_NAME match this agent before first run.
 #
-# Push to the branch below (or use workflow_dispatch) to redeploy.
+# Push to the branch below (or use workflow_dispatch: Actions → Deploy to Agentrix → Run workflow) to redeploy.
+# Deploy from here, not from the Agentrix UI, so every deploy gets the next version. After a run, `git pull`
+# before your next push (the run adds a "Release x.y.z [skip ci]" commit).
 # Runtime branch_name is taken from github.ref_name.
 #
 # A redeploy restarts the pod, and extraction jobs live in memory (DEPLOYMENT.md): a job running at that moment is
@@ -23,15 +25,40 @@ on:
       - "tests/**"
   workflow_dispatch:
 
+# One deploy at a time: each run starts from the version the previous run committed.
+concurrency:
+  group: deploy-agentrix
+  cancel-in-progress: false
+
 jobs:
   deploy:
     if: github.repository_owner == 'bayer-int'  # copies elsewhere do not deploy
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write  # commits the raised version back to the branch
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}  # the branch head, so a queued run sees the previous run's version commit
+
+      # Every deploy needs a version Agentrix has not seen, or it builds from its cache (Eswar, 29 Oct).
+      # One version for Agentrix, the Dockerfile and the agent files (Eswar, 24 Nov): raised here, committed, deployed.
+      - name: Raise the version
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION=$(python3 scripts/bump_version.py)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git commit -qam "Release ${VERSION} [skip ci]"
+          for attempt in 1 2 3; do
+            git push -q origin "HEAD:${GITHUB_REF_NAME}" && break
+            if [[ $attempt == 3 ]]; then echo "::error::could not push the version commit"; exit 1; fi
+            git fetch -q --depth=50 origin "${GITHUB_REF_NAME}"
+            git rebase -q FETCH_HEAD
+          done
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Redeploy agent
         env:
@@ -40,41 +67,10 @@ jobs:
           PROJECT_ID: "prj-ff9f7094"
           AGENT_ID: "agent-27163dcf"
           AGENT_NAME: "use-summary-table-extractor"
-          DEFAULT_VERSION: "1.0.19"
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
 
-          # Resolve version from repo (first match wins), else DEFAULT_VERSION
-          VERSION=""
-
-          # 1) VERSION file at repo root: contents like 1.2.3
-          if [[ -f VERSION ]]; then
-            VERSION=$(tr -d '[:space:]' < VERSION)
-          fi
-
-          # 2) Dockerfile: LABEL version="1.2.3"  or  LABEL version=1.2.3
-          if [[ -z "$VERSION" && -f Dockerfile ]]; then
-            VERSION=$(grep -E '^[[:space:]]*LABEL[[:space:]]+version=' Dockerfile \
-              | head -n1 \
-              | sed -E 's/.*version=//; s/["'\'']//g; s/[[:space:]].*$//; s/\r$//' \
-              || true)
-          fi
-
-          # 3) Dockerfile: ARG VERSION=1.2.3  or  ENV VERSION=1.2.3
-          if [[ -z "$VERSION" && -f Dockerfile ]]; then
-            VERSION=$(grep -E '^[[:space:]]*(ARG|ENV)[[:space:]]+VERSION=' Dockerfile \
-              | head -n1 \
-              | sed -E 's/.*VERSION=//; s/["'\'']//g; s/[[:space:]].*$//; s/\r$//' \
-              || true)
-          fi
-
-          # 4) Every deploy needs a higher version than the last, or Agentrix builds from its cache (Eswar, 29 Oct):
-          #    1.1.<GitHub run number> is new on every run, and above the manual deploys' 1.0.x.
-          if [[ -z "$VERSION" && -n "${GITHUB_RUN_NUMBER:-}" ]]; then
-            VERSION="1.1.${GITHUB_RUN_NUMBER}"
-          fi
-
-          VERSION="${VERSION:-$DEFAULT_VERSION}"
           echo "Using version=${VERSION}"
 
           curl -sS -f -X POST "${API_BASE}/api/agents/deploy" \

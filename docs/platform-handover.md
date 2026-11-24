@@ -200,7 +200,7 @@ Expect the identity steps (1–4) to take days to weeks because of approvals; st
 
 | Task | How |
 |---|---|
-| Deploy a code change | Push to `main` in the bayer-int repo. The GitHub workflow (Auto-Deploy) deploys it to the **Development** stage only (≈5 min); the **Deploy** button in Agentrix does the same. Check it on the `-dev` address, then Agentrix → agent → **Promote to QA** → **Promote to Prod**. Users see it only after the promotion to Production (see "Stages" below). |
+| Deploy a code change | Push to `main` in the bayer-int repo. The GitHub workflow (Auto-Deploy) deploys it to the **Development** stage only (≈5 min); the **Deploy** button in Agentrix also deploys to Development but does not raise the version (see "Versions"). Check it on the `-dev` address, then Agentrix → agent → **Promote to QA** → **Promote to Prod**. Users see it only after the promotion to Production (see "Stages" below). |
 | Change a secret / variable | Agentrix → agent → secrets editor (blank value = keep current) → save → **redeploy** so the pod picks it up. Secrets are per stage (Development, QA, Production). |
 | Check it's alive | `https://<agent>.agent.agentrix.int.bayer.ai/health` on VPN. First hit after idle can take 30–60 s (scale to zero). |
 | Logs | Agentrix → agent → deployment / pipeline runs → View logs; app audit lines are JSON (metadata only, no label text). |
@@ -227,6 +227,17 @@ A secret or variable changed in one stage is not changed in the others. Agentrix
 are intended, so every deploy can be checked before Production; a pre-check that allows promoting straight to
 Production may follow. The app owner can promote without Agentrix help (first done for AgriGuide QC 1.2.79,
 23 Nov 2026).
+
+### Versions
+
+Each app has one version, kept in its Dockerfile (`LABEL version`, `ENV AGENT_VERSION`), `agent-card.json` and
+`agenthub-agent.yaml` (Eswar CL, 24 Nov 2026: keep Agentrix and the repo in sync). The GitHub workflow raises it by one
+on every deploy (`scripts/bump_version.py`), commits "Release x.y.z [skip ci]" to `main` and deploys with exactly that
+version; nobody edits it by hand. So:
+- `git pull` before your next push after a deploy (otherwise the push is rejected with "fetch first").
+- Deploy without a code change via GitHub → Actions → **Deploy to Agentrix** → **Run workflow**, not the Agentrix
+  **Deploy** button (the button does not raise the version, and a version Agentrix has seen makes it reuse its cache).
+- `/health` on each stage's address shows the version it runs.
 
 ### Things that expire — put them in a calendar
 
