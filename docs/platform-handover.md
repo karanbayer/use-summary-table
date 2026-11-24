@@ -224,9 +224,27 @@ To release:
 4. Open the Production address and hard-refresh (Cmd+Shift+R).
 
 A secret or variable changed in one stage is not changed in the others; scale settings ("Keep always ready", Max Replicas) do carry over to every stage (Eswar CL, 24 Nov 2026). All three agents should run with Max Replicas 1 (state lives in the pod: budget and rate counters, UST's jobs, APRS's store), UST also with "Keep always ready". Send platform requests to **agentrix_support@bayer.com** so they are on record for the Agentrix backlog. Agentrix (Eswar CL, 23 Nov 2026): the stages
-are intended, so every deploy can be checked before Production; a pre-check that allows promoting straight to
-Production may follow. The app owner can promote without Agentrix help (first done for AgriGuide QC 1.2.79,
+are intended, so every deploy can be checked before Production; automatic promotion is on the Agentrix backlog (Eswar, 24 Nov 2026): a
+version that deploys successfully and passes the promotion checks moves to the next stage by itself. Until then the
+owner clicks. The app owner can promote without Agentrix help (first done for AgriGuide QC 1.2.79,
 23 Nov 2026).
+
+### Who can open the apps
+
+- Every `*.agent.agentrix.int.bayer.ai` address is behind the Agentrix **Bayer sign-in** (Entra). Anyone with a Bayer
+  account, including external contractors with a `.ext@bayer.com` account, can open it, on or off VPN. Visibility
+  "Private" only keeps an agent off AgentHub; it does not limit who can open it. People without a Bayer account cannot.
+- Managing an agent (deploy, promote, secrets, logs) needs Agentrix project membership (`ef.a.ph-dai-agentrix-contributor`
+  plus being added to the project, section 7).
+- **Open request (Nov 2026): third-party label providers should be able to use AgriGuide QC.** Plan: invite each provider
+  employee as an Entra **guest** (Bayer sponsor, end date), put the guests in a group such as "AgriGuide QC users", and
+  have Agentrix allow only that group for `agriguide-qc` ("assignment required", like other Bayer apps). Not yet asked:
+  Luis Angelico — does the Agentrix sign-in accept guests, can one agent be limited to a group, and which request
+  invites a guest. Before anyone external gets access: update the BEAT record (or give AgriGuide QC its own, section 3),
+  check the provider's contract/NDA covers confidential labels, ask whether the cybersecurity review becomes required,
+  and check the daily budget (pooled with UST).
+- **Persistent storage** will be a generic Agentrix feature (Eswar, 24 Nov 2026, on the backlog). Nice to have for
+  AgriGuide QC (feedback and audit survive restarts); needed for APRS before its users start (January 2027).
 
 ### Versions
 
