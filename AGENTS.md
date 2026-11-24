@@ -62,3 +62,20 @@ For anything beyond a trivial change, work through the relevant sections of
 - Update `specs/Tasks.md`, and add a short note if the outcome differs from the "Done when" line.
 - Note anything you could not verify — for example, behaviour needing a real label PDF that
   isn't committed to `samples/`.
+
+## 6 · Deploying (the agent does this, not the owner)
+
+When a change is ready, commit and push it yourself; the owner should not have to run git or deploy steps.
+- `git pull` first (rebase is configured): after every deploy the workflow commits "Release x.y.z [skip ci]" to
+  `main`, so a push without pulling is rejected.
+- Push to `bayer-int` `main`, `personal` and `bayer` (mirrors). App changes deploy automatically to Agentrix **Development**; docs-only
+  changes (`*.md`, `docs/`, `specs/`, `tests/`) do not deploy.
+- Then watch the run (`gh run watch` on `bayer-int/use-summary-table`, workflow "Deploy to Agentrix"), `git pull` the release
+  commit, and tell the owner the version it deployed.
+- Never edit the version by hand, never add a `VERSION` file, never deploy with the Agentrix **Deploy** button: the
+  workflow raises the one version (`scripts/bump_version.py`; Dockerfile, `agent-card.json`, `agenthub-agent.yaml`).
+  To redeploy without a code change: `gh workflow run "Deploy to Agentrix" -R bayer-int/use-summary-table`.
+- Production changes only by **Promote to QA → Promote to Prod** in Agentrix, which the owner clicks (until Agentrix
+  promotes automatically). Tell the owner which version to promote and what changed for users.
+- A deploy restarts the pod and drops extraction jobs in progress (they live in memory). Push app changes outside US
+  working hours (roughly 14:00–00:00 German time), or commit with `[skip ci]` and deploy later with the command above.
