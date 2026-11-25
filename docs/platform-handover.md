@@ -223,7 +223,7 @@ To release:
    only if a review was really done.
 4. Open the Production address and hard-refresh (Cmd+Shift+R).
 
-A secret or variable changed in one stage is not changed in the others; scale settings ("Keep always ready", Max Replicas) do carry over to every stage (Eswar CL, 24 Nov 2026). All three agents should run with Max Replicas 1 (state lives in the pod: budget and rate counters, UST's jobs, APRS's store), UST also with "Keep always ready". Send platform requests to **agentrix_support@bayer.com** so they are on record for the Agentrix backlog. Agentrix (Eswar CL, 23 Nov 2026): the stages
+A secret or variable changed in one stage is not changed in the others; scale settings ("Keep always ready", Max Replicas) do carry over to every stage (Eswar CL, 24 Nov 2026). All three agents run with Max Replicas 1 in Production (set by Eswar CL, 25 Nov 2026) (state lives in the pod: budget and rate counters, UST's jobs, APRS's store), UST also with "Keep always ready" (set 25 Nov 2026). Send platform requests to **agentrix_support@bayer.com** so they are on record for the Agentrix backlog. Agentrix (Eswar CL, 23 Nov 2026): the stages
 are intended, so every deploy can be checked before Production; automatic promotion is on the Agentrix backlog (Eswar, 24 Nov 2026): a
 version that deploys successfully and passes the promotion checks moves to the next stage by itself. Until then the
 owner clicks. The app owner can promote without Agentrix help (first done for AgriGuide QC 1.2.79,
