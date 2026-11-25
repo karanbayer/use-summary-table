@@ -263,6 +263,7 @@ version; nobody edits it by hand. So:
 |---|---|---|---|
 | Entra client secret | Azure portal → app → Certificates & secrets | **16 Sep 2027** — create the new secret by end of Aug 2027 | **Both apps** lose AI access → new secret into both agents, redeploy |
 | Agentrix PATs (UST: `use-summary-table-deploy` ×2, `use-summary-table-extractor-deploy` ×2, created 23 Sep 2026; AgriGuide: `agriguide-qc`, created 18 Oct 2026) | Agentrix → Access Tokens | **Never** (as shown in Agentrix, Oct 2026) | — |
+| Agentrix **deploy** tokens: GitHub secret `AGENTRIX_PAT` in each repository (scope `deploy:agent`, one project, 90 days) | Agentrix → Access Tokens; GitHub repository → Settings → Secrets and variables → Actions | AgriGuide and UST: saved 29 Oct 2026 → **about 27 Jan 2027**, renew by mid-January. APRS: saved 20 Nov 2026 → about **18 Feb 2027** (check the expiry shown in Agentrix) | Pushes stop reaching Development: the "Deploy to Agentrix" run fails at "Redeploy agent"; the live apps keep running. Create a new token (only `deploy:agent`, that project), replace the GitHub secret, re-run the workflow (Actions → Deploy to Agentrix → Run workflow) |
 
 UST has four active tokens from its first deploy attempts; only one is in use and Agentrix does not show which.
 To tidy up: create one new token, set it as `AGENTRIX_PAT` on the UST agent, redeploy, check `/health` and one
@@ -288,7 +289,7 @@ extraction, then delete the four old tokens. Deleting a token blindly can break 
 - [ ] **Admin** on `bayer-int/use-summary-table` and `bayer-int/agriguide-qc-assistant`.
 - [ ] BEAT record `BEAT04090032`: **IT Product Manager / System Owner** changed to the new owner, MMRs tab reviewed.
 - [ ] Received the current client secret through a secure channel (not email/chat), or created a new one and updated both agents.
-- [ ] Knows the expiry dates in section 6 (most important: Entra client secret, 16 Sep 2027).
+- [ ] Knows the expiry dates in section 6 (most important: Entra client secret, 16 Sep 2027; first: the GitHub deploy tokens, about 27 Jan 2027).
 - [ ] Read each repo's `DEPLOYMENT.md` and `AGENTS.md`.
 
 ---
