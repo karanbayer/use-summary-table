@@ -31,6 +31,7 @@ import {
 } from "./lib/governance.mjs";
 import { getGatewayAccessToken, gatewayConfig } from "./lib/entra.mjs";
 import { readMessagesStream, withStreamEnabled } from "./lib/anthropic-stream.mjs";
+import { callOpenAiChat, isAllowedModel, isOpenAiModel, resolveQcModel } from "./lib/openai-chat.mjs";
 import { initSoftJobs, handleSoftJobs } from "./lib/soft-jobs.mjs";
 
 const PORT = Number(process.env.PORT) || 8080;
@@ -102,8 +103,9 @@ async function handleFeatures(_req, res) {
     // Soft async: in-process queue + memory store. Needs Knative minScale: 1.
     backgroundJobs: true,
     backgroundJobsMode: "soft-async",
-    softAsyncBuild: "2026-09-25a",
-    runtime: "agentrix"
+    softAsyncBuild: "2026-11-26a",
+    runtime: "agentrix",
+    qcModel: resolveQcModel(env, null)
   });
 }
 
@@ -181,13 +183,19 @@ async function handleExtract(req, res) {
   const flags = scanForInjectionPhrases(bodyText);
 
   let model;
+  let parsedBody;
   let upstreamBody;
   try {
     const enabled = withStreamEnabled(bodyText);
-    model = enabled.parsed?.model;
+    parsedBody = enabled.parsed;
+    model = parsedBody?.model;
     upstreamBody = enabled.upstreamBody;
   } catch {
     return json(res, 400, { error: { message: "Request body must be valid JSON" } });
+  }
+
+  if (!isAllowedModel(model)) {
+    return json(res, 400, { error: { message: `Model not allowed: ${model || "(missing)"}` } });
   }
 
   let accessToken;
@@ -203,7 +211,73 @@ async function handleExtract(req, res) {
     return json(res, 502, { error: { message: err.message } });
   }
 
-  const { messagesUrl } = gatewayConfig(env);
+  const { messagesUrl, baseUrl } = gatewayConfig(env);
+
+  if (isOpenAiModel(model)) {
+    res.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+      "x-ust-stream": "1",
+      "x-ust-result": "1"
+    });
+    const writeLine = (line) => {
+      if (!res.writableEnded) res.write(line);
+    };
+    const keepalive = setInterval(() => {
+      try { writeLine(": keepalive\n\n"); } catch { /* client gone */ }
+    }, KEEPALIVE_MS);
+    try {
+      writeLine(": upstream-open\n\n");
+      const assembled = await callOpenAiChat({
+        chatUrl: `${baseUrl}/chat/completions`,
+        accessToken,
+        anthropicBody: parsedBody
+      });
+      const usageRaw = assembled.usage || {};
+      const inputTokens = usageRaw.input_tokens ?? 0;
+      const outputTokens = usageRaw.output_tokens ?? 0;
+      const estCostUsd = (inputTokens || outputTokens || usageRaw.costInUSD != null)
+        ? estimateCostUsd({ inputTokens, outputTokens, costInUSD: usageRaw.costInUSD }, model)
+        : 0;
+      if (inputTokens || outputTokens || estCostUsd) {
+        await recordUsage(env, { inputTokens, outputTokens, estCostUsd });
+      }
+      await recordAudit(env, {
+        source: "extract",
+        status: "ok",
+        durationMs: Date.now() - startedAt,
+        model,
+        inputTokens: inputTokens || undefined,
+        outputTokens: outputTokens || undefined,
+        estCostUsd: (inputTokens || outputTokens || estCostUsd) ? estCostUsd : undefined,
+        flags: flags.length ? flags : undefined
+      });
+      writeLine(`data: ${JSON.stringify({ type: "ust_result", message: assembled })}\n\n`);
+    } catch (err) {
+      console.error(`extract (openai-chat): failed: ${err.message}`);
+      try {
+        await recordAudit(env, {
+          source: "extract",
+          status: "error",
+          durationMs: Date.now() - startedAt,
+          model,
+          flags: flags.length ? flags : undefined
+        });
+      } catch { /* ignore */ }
+      try {
+        writeLine(`data: ${JSON.stringify({
+          type: "ust_error",
+          error: { message: err.message || "AI Gateway request failed" }
+        })}\n\n`);
+      } catch { /* ignore */ }
+    } finally {
+      clearInterval(keepalive);
+      if (!res.writableEnded) res.end();
+    }
+    return;
+  }
+
   let upstreamResponse;
   try {
     upstreamResponse = await fetch(messagesUrl, {

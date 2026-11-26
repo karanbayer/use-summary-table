@@ -39,6 +39,7 @@ import {
 } from "./knowledge.js";
 import { estimateCostUsd } from "./governance.js";
 import { getGatewayAccessToken, gatewayConfig } from "./entra.js";
+import { callOpenAiChat, isOpenAiModel, resolveQcModel } from "./openai-chat.js";
 import { deriveRateCounts, singleActiveConcentration, chosenActiveForMultiAi, labelMethodFacts, acidEquivalentConcentration } from "./derive-rates.js";
 
 const MAX_TOKENS = 64000;
@@ -548,13 +549,13 @@ async function readMessagesStream(response) {
 
 function addUsage(totals, usage, model = MODEL_STANDARD) {
   if (!usage) return;
-  totals.inputTokens += usage.inputTokens || 0;
-  totals.outputTokens += usage.outputTokens || 0;
+  totals.inputTokens += usage.inputTokens ?? usage.input_tokens ?? 0;
+  totals.outputTokens += usage.outputTokens ?? usage.output_tokens ?? 0;
   totals.estCostUsd += estimateCostUsd(usage, model);
 }
 
 async function callAnthropic(env, messages, systemBlocks, tools, toolChoiceName, model = MODEL_STANDARD) {
-  const body = JSON.stringify({
+  const requestPayload = {
     model,
     max_tokens: MAX_TOKENS,
     system: systemBlocks,
@@ -562,9 +563,11 @@ async function callAnthropic(env, messages, systemBlocks, tools, toolChoiceName,
     tools,
     tool_choice: { type: "tool", name: toolChoiceName },
     stream: true
-  });
+  };
+  const body = JSON.stringify(requestPayload);
 
-  const { messagesUrl } = gatewayConfig(env);
+  const { messagesUrl, baseUrl } = gatewayConfig(env);
+  const useOpenAi = isOpenAiModel(model);
   let data;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     let response;
@@ -576,6 +579,25 @@ async function callAnthropic(env, messages, systemBlocks, tools, toolChoiceName,
       console.warn(`Entra token errored (attempt ${attempt}/${MAX_ATTEMPTS}): ${err.message} — retrying…`);
       await sleep(RETRY_BASE_DELAY_MS * attempt);
       continue;
+    }
+
+    if (useOpenAi) {
+      try {
+        data = await callOpenAiChat({
+          chatUrl: `${baseUrl}/chat/completions`,
+          accessToken,
+          anthropicBody: requestPayload
+        });
+        break;
+      } catch (err) {
+        const retryable = !err.status || RETRYABLE_STATUS.has(err.status);
+        if (!retryable || attempt === MAX_ATTEMPTS) {
+          throw new Error(err.message || "AI Gateway request failed");
+        }
+        console.warn(`AI Gateway (${model}) failed (attempt ${attempt}/${MAX_ATTEMPTS}): ${err.message} — retrying…`);
+        await sleep(RETRY_BASE_DELAY_MS * attempt);
+        continue;
+      }
     }
 
     try {
@@ -999,8 +1021,10 @@ function mergeQcReports(reports) {
   return { overall, defects };
 }
 
-// Stage 2 — QC agent (Sonnet), with independent retries — never re-extracts.
-async function runQcTurn(env, jobId, fileIndex, rawRows, doc, pageMarkedText, systemBlocks, tools, usageTotals, rowOffset = 0) {
+// Stage 2 — independent QC agent (env.QC_MODEL when set, else Sonnet), with
+// independent retries — never re-extracts.
+async function runQcTurn(env, jobId, fileIndex, rawRows, doc, pageMarkedText, systemBlocks, tools, usageTotals, rowOffset = 0, qcModel = null) {
+  const model = qcModel || resolveQcModel(env, MODEL_STANDARD);
   await reportStage(env, jobId, fileIndex, "independent QC review (stage 2/3)");
   const stageText = [
     "You are now acting as an independent QC reviewer — a senior regulatory manager auditing someone else's extraction, not the person who produced it. Run all 5 passes: structural (schema compliance, no blanks), column-wise plausibility, row-wise verification against the label text above, completeness for the rows given, and confidence calibration.",
@@ -1012,14 +1036,15 @@ async function runQcTurn(env, jobId, fileIndex, rawRows, doc, pageMarkedText, sy
   const messages = [
     { role: "user", content: buildDocMessageBlocks(doc, pageMarkedText, stageText) }
   ];
-  const { data, toolUse } = await callAnthropic(env, messages, systemBlocks, tools, "emit_qc_report", MODEL_STANDARD);
+  const { data, toolUse } = await callAnthropic(env, messages, systemBlocks, tools, "emit_qc_report", model);
   await assertNotCancelled(env, jobId);
-  addUsage(usageTotals, data.usage);
+  addUsage(usageTotals, data.usage, model);
   messages.push({ role: "assistant", content: data.content });
-  return { messages, qcReport: toolUse.input || { overall: "Clean", defects: [] }, lastToolUseId: toolUse.id };
+  return { messages, qcReport: toolUse.input || { overall: "Clean", defects: [] }, lastToolUseId: toolUse.id, qcModel: model };
 }
 
 async function runQcTurnWithRetries(env, jobId, fileIndex, rawRows, doc, pageMarkedText, systemBlocks, tools, usageTotals) {
+  const configuredQcModel = resolveQcModel(env, MODEL_STANDARD);
   const pages = parseMarkedPages(pageMarkedText);
   const mega = isMegaLabel(pages.length, rawRows.length);
   const maxAttempts = mega ? QC_MAX_ATTEMPTS_MEGA : QC_MAX_ATTEMPTS;
@@ -1030,6 +1055,11 @@ async function runQcTurnWithRetries(env, jobId, fileIndex, rawRows, doc, pageMar
 
   const runOne = async (rows, offset) => {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // On the final attempt, fall back to Sonnet if a cross-model QC_MODEL
+      // errored/rate-limited, so a secondary-provider hiccup never drops QC.
+      const attemptModel = (attempt === maxAttempts && configuredQcModel !== MODEL_STANDARD)
+        ? MODEL_STANDARD
+        : configuredQcModel;
       // Mega: cited-page slice. Small/medium: simple head truncate (fast, enough).
       const qcLabelText = mega
         ? buildQcLabelText(pageMarkedText, rows, maxChars)
@@ -1038,16 +1068,19 @@ async function runQcTurnWithRetries(env, jobId, fileIndex, rawRows, doc, pageMar
           : pageMarkedText);
       try {
         if (attempt > 1) {
-          console.log(`QC retry ${attempt}/${maxAttempts} (offset ${offset}) — ${rows.length} row(s); not re-extracting`);
+          const fallbackNote = attemptModel !== configuredQcModel
+            ? ` (falling back from ${configuredQcModel} to ${attemptModel})`
+            : "";
+          console.log(`QC retry ${attempt}/${maxAttempts} (offset ${offset})${fallbackNote} — ${rows.length} row(s); not re-extracting`);
           await sleep(RETRY_BASE_DELAY_MS * attempt * (mega ? 2 : 1));
         }
         return await runQcTurn(
-          env, jobId, fileIndex, rows, doc, qcLabelText, systemBlocks, tools, usageTotals, offset
+          env, jobId, fileIndex, rows, doc, qcLabelText, systemBlocks, tools, usageTotals, offset, attemptModel
         );
       } catch (err) {
         if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;
         lastErr = err;
-        console.warn(`QC attempt ${attempt}/${maxAttempts} (offset ${offset}) failed — ${err.message}`);
+        console.warn(`QC attempt ${attempt}/${maxAttempts} (${attemptModel}, offset ${offset}) failed — ${err.message}`);
         maxChars = Math.max(mega ? 22000 : 40000, Math.floor(maxChars * 0.7));
       }
     }
@@ -1078,62 +1111,67 @@ async function runQcTurnWithRetries(env, jobId, fileIndex, rawRows, doc, pageMar
 // Stage 3 — bounded remediation loop: only engages when QC found Critical/
 // High defects, and never blocks — whatever the final QC report says, rows
 // and report both flow through to the result written to KV.
-async function runRemediationLoop(env, jobId, fileIndex, state, rawRows, systemBlocks, tools, usageTotals) {
-  let { messages, qcReport, lastToolUseId } = state;
+// Uses a fresh Anthropic conversation for Opus (never chains cross-provider
+// tool_use_ids from Stage 2) and runs the QC recheck as a fresh independent
+// turn on the configured QC model.
+const REMEDIATION_DEFECT_CAP = 40;
+
+function selectActionableDefects(defects) {
+  const all = Array.isArray(defects) ? defects : [];
+  const highCrit = all.filter(d => /^(critical|high)$/i.test(String(d?.severity || "").trim()));
+  return (highCrit.length ? highCrit : all).slice(0, REMEDIATION_DEFECT_CAP);
+}
+
+async function runRemediationLoop(env, jobId, fileIndex, state, rawRows, doc, pageMarkedText, systemBlocks, tools, usageTotals) {
+  let { qcReport } = state;
   let cycle = 0;
   const needsFix = r => r && (r.overall === "Critical" || r.overall === "High");
+  const pages = parseMarkedPages(pageMarkedText);
+  const mega = isMegaLabel(pages.length, rawRows.length);
+  const remMaxChars = mega
+    ? QC_MAX_CHARS_MEGA
+    : (pages.length >= FORCE_TWO_PASS_MIN_PAGES ? QC_MAX_CHARS_LARGE : QC_MAX_CHARS);
+
   while (needsFix(qcReport) && cycle < REMEDIATION_MAX_CYCLES) {
     cycle++;
+    const actionableDefects = selectActionableDefects(qcReport.defects);
     await reportStage(env, jobId, fileIndex, `remediating (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
-    console.log(`remediation cycle ${cycle}/${REMEDIATION_MAX_CYCLES}: ${(qcReport.defects || []).length} defect(s) (${qcReport.overall}) — correcting on Opus (patches)…`);
-    messages.push({
-      role: "user",
-      content: [
-        { type: "tool_result", tool_use_id: lastToolUseId, content: "Received." },
-        {
-          type: "text",
-          text: [
-            "Correct the defects below using emit_row_patches — do NOT re-emit the full table.",
-            "For each cell defect: one patch with row_index, column, and new_value traced to the label.",
-            "For missing uses (row_index -1): put complete new rows in add_rows only.",
-            "For true duplicates: list indices in remove_row_indices.",
-            "Current row set (JSON, 0-based indices):",
-            JSON.stringify(rawRows),
-            "Defects to resolve:",
-            JSON.stringify(qcReport.defects || [])
-          ].join("\n")
-        }
-      ]
-    });
+    console.log(`remediation cycle ${cycle}/${REMEDIATION_MAX_CYCLES}: ${actionableDefects.length} Critical/High defect(s) (${qcReport.overall}) — correcting on Opus (fresh patches)…`);
+    const remLabelText = mega
+      ? buildQcLabelText(pageMarkedText, rawRows, remMaxChars)
+      : (pageMarkedText.length > remMaxChars
+        ? pageMarkedText.slice(0, remMaxChars) + `\n\n[Label truncated for remediation at ${remMaxChars} chars]`
+        : pageMarkedText);
+    const corrMessages = [
+      {
+        role: "user",
+        content: buildDocMessageBlocks(doc, remLabelText, [
+          "An independent QC reviewer flagged the Critical/High defects below against the extracted rows.",
+          "Correct ONLY the defects clearly supported by the label text above using emit_row_patches — do NOT re-emit the full table.",
+          "If a flagged cell is already accurate per the label text and USTA schema/derivation rules, SKIP it (do not overwrite a correct value).",
+          "For each confirmed cell defect: one patch with row_index, column, and new_value traced to the label.",
+          "For confirmed missing uses (row_index -1): put complete new rows in add_rows only.",
+          "For confirmed true duplicates: list indices in remove_row_indices.",
+          "Current row set (JSON, 0-based indices):",
+          JSON.stringify(rawRows),
+          "Critical/High defects to verify and resolve:",
+          JSON.stringify(actionableDefects)
+        ].join("\n"))
+      }
+    ];
     try {
-      const corr = await callAnthropic(env, messages, systemBlocks, tools, "emit_row_patches", MODEL_ESCALATED);
+      const corr = await callAnthropic(env, corrMessages, systemBlocks, tools, "emit_row_patches", MODEL_ESCALATED);
       await assertNotCancelled(env, jobId);
       addUsage(usageTotals, corr.data.usage, MODEL_ESCALATED);
-      messages.push({ role: "assistant", content: corr.data.content });
       const merged = applyRowPatches(rawRows, corr.toolUse.input || {});
       rawRows = merged.rows;
       console.log(`applied ${merged.applied} patch(es), added ${merged.added}, removed ${merged.removed} — ${rawRows.length} row(s) now`);
 
       await reportStage(env, jobId, fileIndex, `QC recheck (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
-      messages.push({
-        role: "user",
-        content: [
-          { type: "tool_result", tool_use_id: corr.toolUse.id, content: "Received." },
-          {
-            type: "text",
-            text: [
-              "Re-run the full 5-pass QC review against the corrected rows below (JSON, 0-based indices):",
-              JSON.stringify(rawRows)
-            ].join("\n")
-          }
-        ]
-      });
-      const recheck = await callAnthropic(env, messages, systemBlocks, tools, "emit_qc_report", MODEL_ESCALATED);
-      await assertNotCancelled(env, jobId);
-      addUsage(usageTotals, recheck.data.usage, MODEL_ESCALATED);
-      messages.push({ role: "assistant", content: recheck.data.content });
-      qcReport = recheck.toolUse.input || qcReport;
-      lastToolUseId = recheck.toolUse.id;
+      const recheckState = await runQcTurnWithRetries(
+        env, jobId, fileIndex, rawRows, doc, pageMarkedText, systemBlocks, tools, usageTotals
+      );
+      qcReport = recheckState.qcReport || qcReport;
     } catch (err) {
       if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;
       console.warn(`remediation cycle ${cycle} aborted — ${err.message}. Keeping ${rawRows.length} row(s).`);
@@ -1325,7 +1363,7 @@ export async function extractWithLLM(env, jobId, fileIndex, doc, pageMarkedText)
   let remediated;
   try {
     remediated = needsFix
-      ? await runRemediationLoop(env, jobId, fileIndex, qc, allRawRows, systemBlocks, tools, usageTotals)
+      ? await runRemediationLoop(env, jobId, fileIndex, qc, allRawRows, doc, pageMarkedText, systemBlocks, tools, usageTotals)
       : { rawRows: allRawRows, qcReport: qc.qcReport, cycles: 0 };
   } catch (err) {
     if (err instanceof JobCancelledError || err?.name === "JobCancelledError") throw err;

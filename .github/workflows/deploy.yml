@@ -42,6 +42,9 @@ jobs:
         with:
           ref: ${{ github.ref_name }}  # the branch head, so a queued run sees the previous run's version commit
 
+      - name: Verify server pipeline is in sync
+        run: bash scripts/sync-server-pipeline.sh --check
+
       # Every deploy needs a version Agentrix has not seen, or it builds from its cache (Eswar, 29 Oct).
       # One version for Agentrix, the Dockerfile and the agent files (Eswar, 24 Nov): raised here, committed, deployed.
       - name: Raise the version

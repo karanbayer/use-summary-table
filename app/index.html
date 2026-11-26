@@ -4493,8 +4493,11 @@ const REMEDIATION_MAX_CYCLES = 1;
 // /v1/models on global.ai-gateway.int.bayer.ai).
 const MODEL_STANDARD = "anthropic/claude-sonnet-5";
 const MODEL_ESCALATED = "anthropic/claude-opus-5";
+// Optional cross-model QC override (advertised by GET /api/features when
+// server env QC_MODEL is configured, e.g. microsoft-foundry-eu/gpt-6-sol-2).
+let MODEL_QC = MODEL_STANDARD;
 // Bump when changing the interactive AI pipeline so logs prove which build ran.
-const PIPELINE_BUILD = "2026-10-14g";
+const PIPELINE_BUILD = "2026-11-26a";
 // Soft-warn thresholds only (interactive still proceeds). Prefer background
 // for batches / SIVANTO-class PDFs via the explicit Run in background button.
 const INTERACTIVE_WARN_FILES = 3;
@@ -6001,10 +6004,10 @@ function buildExtractionChunks(doc) {
 
 // Stage 2 — QC agent: a fresh conversation, independent of the extractor's
 // own reasoning, auditing the initial row set against the label text.
-// Sonnet-first (Agentrix timing: Opus QC often dominated wall-clock). Opus
-// stays reserved for Critical/High remediation patches.
-async function runQcTurn(rawRows, doc, pageMarkedText, systemBlocks, tools, pState) {
-  updateAiProgress(pState, "independent QC review (stage 2/3)");
+// Uses MODEL_QC (env.QC_MODEL when configured, e.g. EU GPT-6 Sol; else Sonnet).
+// Stage 3 (remediation) uses Opus for Critical/High patches only.
+async function runQcTurn(rawRows, doc, pageMarkedText, systemBlocks, tools, pState, qcModel = MODEL_QC, advanceProgress = true) {
+  if (advanceProgress) updateAiProgress(pState, "independent QC review (stage 2/3)");
   const stageText = [
     "You are now acting as an independent QC reviewer — a senior regulatory manager auditing someone else's extraction, not the person who produced it. Run all 5 passes: structural (schema compliance, no blanks), column-wise plausibility, row-wise verification against the label text above, completeness (every crop/use/method the label states, R-17/R-21/R-25), and confidence calibration.",
     "The candidate row set to review (JSON, 0-based indices):",
@@ -6014,11 +6017,11 @@ async function runQcTurn(rawRows, doc, pageMarkedText, systemBlocks, tools, pSta
     { role: "user", content: buildDocMessageBlocks(doc, pageMarkedText, stageText) }
   ];
   const { data, toolUse } = await callAnthropic(
-    messages, systemBlocks, tools, "emit_qc_report", MODEL_STANDARD
+    messages, systemBlocks, tools, "emit_qc_report", qcModel
   );
   messages.push({ role: "assistant", content: data.content });
-  advanceAiProgress(pState, 1, "QC review complete (stage 2/3)");
-  return { messages, qcReport: toolUse.input || { overall: "Clean", defects: [] }, lastToolUseId: toolUse.id };
+  if (advanceProgress) advanceAiProgress(pState, 1, "QC review complete (stage 2/3)");
+  return { messages, qcReport: toolUse.input || { overall: "Clean", defects: [] }, lastToolUseId: toolUse.id, qcModel };
 }
 
 /** Mega only: cite row pages for QC. Small/medium use simple head truncate. */
@@ -6078,7 +6081,8 @@ function mergeQcReports(reports) {
  * Retry QC only — extraction rows stay fixed. Mega labels get cited-page
  * slices + batched QC; small/medium stay on the fast one-shot path.
  */
-async function runQcTurnWithRetries(rawRows, doc, pageMarkedText, systemBlocks, tools, pState) {
+async function runQcTurnWithRetries(rawRows, doc, pageMarkedText, systemBlocks, tools, pState, advanceProgress = true) {
+  const configuredQcModel = MODEL_QC || MODEL_STANDARD;
   const pages = doc.numPages || (doc.pages && doc.pages.length) || 0;
   const mega = isMegaLabel(pages, rawRows.length);
   const maxAttempts = mega ? QC_MAX_ATTEMPTS_MEGA : QC_MAX_ATTEMPTS;
@@ -6087,8 +6091,13 @@ async function runQcTurnWithRetries(rawRows, doc, pageMarkedText, systemBlocks, 
     : (pages >= FORCE_TWO_PASS_MIN_PAGES ? QC_MAX_CHARS_LARGE : QC_MAX_CHARS);
   let lastErr = null;
 
-  async function runOne(rows) {
+  async function runOne(rows, shouldAdvance) {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // On final attempt, fall back to Sonnet if a cross-model QC_MODEL
+      // errored/rate-limited so a secondary-provider hiccup never drops QC.
+      const attemptModel = (attempt === maxAttempts && configuredQcModel !== MODEL_STANDARD)
+        ? MODEL_STANDARD
+        : configuredQcModel;
       const qcLabelText = mega
         ? buildQcLabelText(pageMarkedText, rows, maxChars)
         : (pageMarkedText.length > maxChars
@@ -6103,14 +6112,17 @@ async function runQcTurnWithRetries(rawRows, doc, pageMarkedText, systemBlocks, 
       }
       try {
         if (attempt > 1) {
-          logEl.textContent += `   ↻ QC retry ${attempt}/${maxAttempts}`
+          const fallbackNote = attemptModel !== configuredQcModel
+            ? ` (falling back from ${configuredQcModel} to ${attemptModel})`
+            : "";
+          logEl.textContent += `   ↻ QC retry ${attempt}/${maxAttempts}${fallbackNote}`
             + ` — keeping ${rawRows.length} extraction row(s); not re-running Pass-1/2…\n`;
           await sleep(RETRY_BASE_DELAY_MS * attempt * (mega ? 2 : 1));
         }
-        return await runQcTurn(rows, doc, qcLabelText, systemBlocks, tools, pState);
+        return await runQcTurn(rows, doc, qcLabelText, systemBlocks, tools, pState, attemptModel, shouldAdvance);
       } catch (err) {
         lastErr = err;
-        logEl.textContent += `   ⚠ QC attempt ${attempt}/${maxAttempts} failed — ${err.message}\n`;
+        logEl.textContent += `   ⚠ QC attempt ${attempt}/${maxAttempts} (${attemptModel}) failed — ${err.message}\n`;
         maxChars = Math.max(mega ? 22000 : 40000, Math.floor(maxChars * 0.7));
       }
     }
@@ -6118,16 +6130,17 @@ async function runQcTurnWithRetries(rawRows, doc, pageMarkedText, systemBlocks, 
   }
 
   if (!mega || rawRows.length <= QC_ROW_BATCH) {
-    return runOne(rawRows);
+    return runOne(rawRows, advanceProgress);
   }
 
   logEl.textContent += `   · QC mega batches — ${rawRows.length} row(s) × ≤${QC_ROW_BATCH}\n`;
   const reports = [];
   let lastState = null;
   for (let i = 0; i < rawRows.length; i += QC_ROW_BATCH) {
-    lastState = await runOne(rawRows.slice(i, i + QC_ROW_BATCH));
+    const isLast = i + QC_ROW_BATCH >= rawRows.length;
+    lastState = await runOne(rawRows.slice(i, i + QC_ROW_BATCH), advanceProgress && isLast);
     reports.push(lastState.qcReport);
-    if (i + QC_ROW_BATCH < rawRows.length) await sleep(INTER_CHUNK_PAUSE_MEGA_MS);
+    if (!isLast) await sleep(INTER_CHUNK_PAUSE_MEGA_MS);
   }
   return {
     messages: lastState?.messages || [],
@@ -6139,13 +6152,24 @@ async function runQcTurnWithRetries(rawRows, doc, pageMarkedText, systemBlocks, 
 // Stage 3 — remediation runs ONLY for Critical/High QC. Clean, Low, and
 // Medium never enter the loop (no Opus patch calls). Informational defects
 // still surface in the UI via the QC report.
+// Uses a fresh Anthropic conversation for Opus (never chains cross-provider
+// tool_use_ids from Stage 2) and runs the QC recheck as a fresh independent
+// turn on MODEL_QC.
+const REMEDIATION_DEFECT_CAP = 40;
+
+function selectActionableDefects(defects) {
+  const all = Array.isArray(defects) ? defects : [];
+  const highCrit = all.filter(d => /^(critical|high)$/i.test(String(d?.severity || "").trim()));
+  return (highCrit.length ? highCrit : all).slice(0, REMEDIATION_DEFECT_CAP);
+}
+
 function qcNeedsRemediation(qcReport) {
   const overall = String(qcReport?.overall || "").trim();
   return overall === "Critical" || overall === "High";
 }
 
-async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
-  let { messages, qcReport, lastToolUseId } = state;
+async function runRemediationLoop(state, rawRows, doc, pageMarkedText, systemBlocks, tools, pState) {
+  let { qcReport } = state;
   let cycle = 0;
   let remediationStepsDone = 0;
   const remediationModel = MODEL_ESCALATED;
@@ -6162,32 +6186,41 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
     return { rawRows, qcReport, cycles: 0 };
   }
 
+  const pages = doc.numPages || (doc.pages && doc.pages.length) || 0;
+  const mega = isMegaLabel(pages, rawRows.length);
+  const remMaxChars = mega
+    ? QC_MAX_CHARS_MEGA
+    : (pages >= FORCE_TWO_PASS_MIN_PAGES ? QC_MAX_CHARS_LARGE : QC_MAX_CHARS);
+
   while (qcNeedsRemediation(qcReport) && cycle < REMEDIATION_MAX_CYCLES) {
     cycle++;
+    const actionableDefects = selectActionableDefects(qcReport.defects);
     updateAiProgress(pState, `remediating (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
-    logEl.textContent += `   remediation cycle ${cycle}/${REMEDIATION_MAX_CYCLES}: ${(qcReport.defects || []).length} defect(s) (${qcReport.overall}) — correcting on ${remediationLabel}…\n`;
-    messages.push({
-      role: "user",
-      content: [
-        { type: "tool_result", tool_use_id: lastToolUseId, content: "Received." },
-        {
-          type: "text",
-          text: [
-            "Correct ONLY the listed Critical/High defects with emit_row_patches — do not re-emit the full table.",
-            "Cell defect → one patch {row_index, column, new_value} traced to the label.",
-            "Missing use (row_index -1) → complete row(s) in add_rows only.",
-            "True duplicates → remove_row_indices.",
-            "Current rows (JSON):",
-            JSON.stringify(rawRows),
-            "Defects:",
-            JSON.stringify(qcReport.defects || [])
-          ].join("\n")
-        }
-      ]
-    });
+    logEl.textContent += `   remediation cycle ${cycle}/${REMEDIATION_MAX_CYCLES}: ${actionableDefects.length} Critical/High defect(s) (${qcReport.overall}) — correcting on ${remediationLabel}…\n`;
+    const remLabelText = mega
+      ? buildQcLabelText(pageMarkedText, rawRows, remMaxChars)
+      : (pageMarkedText.length > remMaxChars
+        ? pageMarkedText.slice(0, remMaxChars) + `\n\n[Label truncated for remediation at ${remMaxChars.toLocaleString()} characters]`
+        : pageMarkedText);
+    const corrMessages = [
+      {
+        role: "user",
+        content: buildDocMessageBlocks(doc, remLabelText, [
+          "An independent QC reviewer flagged the Critical/High defects below against the extracted rows.",
+          "Correct ONLY the defects clearly supported by the label text above using emit_row_patches — do not re-emit the full table.",
+          "If a flagged cell is already accurate per the label text and USTA schema/derivation rules, SKIP it (do not overwrite a correct value).",
+          "Confirmed cell defect → one patch {row_index, column, new_value} traced to the label.",
+          "Confirmed missing use (row_index -1) → complete row(s) in add_rows only.",
+          "Confirmed true duplicates → remove_row_indices.",
+          "Current rows (JSON, 0-based indices):",
+          JSON.stringify(rawRows),
+          "Critical/High defects to verify and resolve:",
+          JSON.stringify(actionableDefects)
+        ].join("\n"))
+      }
+    ];
     try {
-      const corr = await callAnthropic(messages, systemBlocks, tools, "emit_row_patches", remediationModel);
-      messages.push({ role: "assistant", content: corr.data.content });
+      const corr = await callAnthropic(corrMessages, systemBlocks, tools, "emit_row_patches", remediationModel);
       const merged = applyRowPatches(rawRows, corr.toolUse.input || {});
       rawRows = merged.rows;
       logEl.textContent += `   applied ${merged.applied} patch(es)`
@@ -6198,23 +6231,10 @@ async function runRemediationLoop(state, rawRows, systemBlocks, tools, pState) {
       advanceAiProgress(pState, 1, `remediation correction applied (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
 
       updateAiProgress(pState, `QC recheck (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
-      messages.push({
-        role: "user",
-        content: [
-          { type: "tool_result", tool_use_id: corr.toolUse.id, content: "Received." },
-          {
-            type: "text",
-            text: [
-              "Re-run 5-pass QC on the corrected rows (JSON, 0-based indices):",
-              JSON.stringify(rawRows)
-            ].join("\n")
-          }
-        ]
-      });
-      const recheck = await callAnthropic(messages, systemBlocks, tools, "emit_qc_report", MODEL_STANDARD);
-      messages.push({ role: "assistant", content: recheck.data.content });
-      qcReport = recheck.toolUse.input || qcReport;
-      lastToolUseId = recheck.toolUse.id;
+      const recheckState = await runQcTurnWithRetries(
+        rawRows, doc, pageMarkedText, systemBlocks, tools, pState, false
+      );
+      qcReport = recheckState.qcReport || qcReport;
       remediationStepsDone++;
       advanceAiProgress(pState, 1, `QC recheck complete (stage 3/3, cycle ${cycle}/${REMEDIATION_MAX_CYCLES})`);
     } catch (err) {
@@ -6673,7 +6693,7 @@ async function extractWithLLM(doc, pState) {
 
   // Extract once → QC with its own retries → keep draft if QC still fails.
   // Never re-run Pass-1/2 just because QC 503'd (that wiped 90 rows before).
-  logEl.textContent += `   stage 2/3 — independent QC review (Sonnet)…\n`;
+  logEl.textContent += `   stage 2/3 — independent QC review (${MODEL_QC})…\n`;
   let qc;
   try {
     qc = await runQcTurnWithRetries(
@@ -6704,7 +6724,7 @@ async function extractWithLLM(doc, pState) {
     : `   stage 3/3 — remediation skipped (QC ${qc.qcReport?.overall || "Clean"}; only Critical/High remediates)\n`;
   let remediated;
   try {
-    remediated = await runRemediationLoop(qc, allRawRows, systemBlocks, tools, pState);
+    remediated = await runRemediationLoop(qc, allRawRows, doc, pageMarkedText, systemBlocks, tools, pState);
   } catch (err) {
     logEl.textContent += `   ⚠ remediation failed — ${err.message}. Keeping ${allRawRows.length} row(s) from extraction.\n`;
     advanceAiProgress(pState, REMEDIATION_MAX_CYCLES * 2, "remediation failed (stage 3/3)");
@@ -7384,6 +7404,9 @@ if (jobIdParam) {
     const res = await fetch("/api/features");
     if (!res.ok) return;
     const features = await res.json();
+    if (typeof features.qcModel === "string" && features.qcModel.trim()) {
+      MODEL_QC = features.qcModel.trim();
+    }
     if (features.backgroundJobs === false) {
       backgroundJobsAvailable = false;
       runBgBtn.style.display = "none";

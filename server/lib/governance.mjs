@@ -10,7 +10,8 @@ const DEFAULT_AUDIT_TTL_SECONDS = 180 * 24 * 60 * 60;
 
 const MODEL_PRICING = {
   "anthropic/claude-sonnet-5": { inputPerMtok: 3, outputPerMtok: 15 },
-  "anthropic/claude-opus-5": { inputPerMtok: 15, outputPerMtok: 75 }
+  "anthropic/claude-opus-5": { inputPerMtok: 15, outputPerMtok: 75 },
+  "microsoft-foundry-eu/gpt-6-sol-2": { inputPerMtok: 2.5, outputPerMtok: 15 }
 };
 const DEFAULT_MODEL = "anthropic/claude-sonnet-5";
 
@@ -65,12 +66,17 @@ export async function checkRateLimit(env, bucketPrefix) {
 
 export function estimateCostUsd(usage, model) {
   if (!usage) return 0;
+  if (typeof usage.costInUSD === "number" && Number.isFinite(usage.costInUSD) && usage.costInUSD >= 0) {
+    return usage.costInUSD;
+  }
   if (model && !MODEL_PRICING[model]) {
     console.warn(`estimateCostUsd: unrecognized model "${model}", using ${DEFAULT_MODEL} pricing as an approximation`);
   }
   const pricing = MODEL_PRICING[model] || MODEL_PRICING[DEFAULT_MODEL];
-  const inputCost = ((usage.inputTokens || 0) / 1e6) * pricing.inputPerMtok;
-  const outputCost = ((usage.outputTokens || 0) / 1e6) * pricing.outputPerMtok;
+  const inputTokens = usage.inputTokens ?? usage.input_tokens ?? 0;
+  const outputTokens = usage.outputTokens ?? usage.output_tokens ?? 0;
+  const inputCost = (inputTokens / 1e6) * pricing.inputPerMtok;
+  const outputCost = (outputTokens / 1e6) * pricing.outputPerMtok;
   return inputCost + outputCost;
 }
 

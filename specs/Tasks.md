@@ -420,6 +420,11 @@ Findings recorded in `docs/CODE-REVIEW.md`.
     Done when: mega (≥100p or ≥80 rows) gets smaller chunks, Pass-2 batch 4, inter-chunk pause, cited-page + batched QC with more retries; small/medium keep fast path (no pause, simple QC); extraction rows always kept if QC streams die; pipeline `2026-10-14f`.
     Note: Worker + app. Overnight Wave C benefits from Worker redeploy.
 
+[x] Task 63: Optional cross-model EU QC (`QC_MODEL`, e.g. `microsoft-foundry-eu/gpt-6-sol-2`)
+    Satisfies: R26, R27
+    Done when: setting `QC_MODEL=microsoft-foundry-eu/gpt-6-sol-2` routes Stage 2 independent QC (and Stage 3 recheck) through Bayer AI Gateway's OpenAI `/chat/completions` translator (`openai-chat.js`/`.mjs`) with SSE keepalives, strict model allowlist, exact `costInUSD` accounting, final-attempt Sonnet fallback, fresh Opus remediation conversation (Critical/High only, capped at 40, declinable when cell is already accurate), and `scripts/sync-server-pipeline.sh --check` enforced in `deploy.yml`; leaving `QC_MODEL` unset preserves Sonnet-only behavior.
+    Note: done (`PIPELINE_BUILD = 2026-11-26a`). Benchmarked on 2 planted-defect 30+ page labels (12/12 caught vs Sonnet 4/6 + 1 timeout) and 2 real Sonnet extractions (14/17 High/Critical real regulatory defects caught including 25-ft aquatic setback and scrambled Canola units that Sonnet self-QC missed, at ~3× lower QC cost).
+
 
 
 

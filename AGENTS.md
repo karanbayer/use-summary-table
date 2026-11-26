@@ -77,8 +77,6 @@ When a change is ready, commit and push it yourself; the owner should not have t
   To redeploy without a code change: `gh workflow run "Deploy to Agentrix" -R bayer-int/use-summary-table`.
 - Production changes only by **Promote to QA → Promote to Prod** in Agentrix, which the owner clicks (until Agentrix
   promotes automatically). Tell the owner which version to promote and what changed for users.
-- A deploy restarts the pod and drops extraction jobs in progress (they live in memory). Push app changes outside US
-  working hours (roughly 14:00–00:00 German time), or commit with `[skip ci]` and deploy later with the command above.
 
 ## 7 · Planning with a second model (any tool)
 

@@ -43,6 +43,7 @@ Optional (defaults match `wrangler.toml`):
 | `TFY_BASE_URL` | `https://eu.ai-gateway.int.bayer.ai/api/llm` |
 | `RATE_LIMIT_PER_MINUTE` | `20` |
 | `DAILY_BUDGET_USD` | `100` |
+| `QC_MODEL` | unset (defaults to `anthropic/claude-sonnet-5`; set `microsoft-foundry-eu/gpt-6-sol-2` for cross-model EU QC) |
 | `KILL_SWITCH_ENABLED` | unset / `false` |
 | `KILL_SWITCH_REASON` | shown when kill switch is on |
 

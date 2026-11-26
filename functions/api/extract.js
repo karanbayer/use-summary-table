@@ -22,6 +22,7 @@ import {
 } from "./_lib/governance.js";
 import { getGatewayAccessToken, gatewayConfig } from "./_lib/entra.js";
 import { readMessagesStream, withStreamEnabled } from "./_lib/anthropic-stream.js";
+import { callOpenAiChat, isAllowedModel, isOpenAiModel } from "./_lib/openai-chat.js";
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const KEEPALIVE_MS = 1500;
@@ -88,13 +89,22 @@ export async function onRequestPost(context) {
   const flags = scanForInjectionPhrases(bodyText);
 
   let model;
+  let parsedBody;
   let upstreamBody;
   try {
     const enabled = withStreamEnabled(bodyText);
-    model = enabled.parsed?.model;
+    parsedBody = enabled.parsed;
+    model = parsedBody?.model;
     upstreamBody = enabled.upstreamBody;
   } catch (_) {
     return new Response(JSON.stringify({ error: { message: "Request body must be valid JSON" } }), {
+      status: 400,
+      headers: { "content-type": "application/json" }
+    });
+  }
+
+  if (!isAllowedModel(model)) {
+    return new Response(JSON.stringify({ error: { message: `Model not allowed: ${model || "(missing)"}` } }), {
       status: 400,
       headers: { "content-type": "application/json" }
     });
@@ -116,7 +126,80 @@ export async function onRequestPost(context) {
     });
   }
 
-  const { messagesUrl } = gatewayConfig(env);
+  const { messagesUrl, baseUrl } = gatewayConfig(env);
+
+  if (isOpenAiModel(model)) {
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+    const encoder = new TextEncoder();
+    const writeLine = async (line) => { await writer.write(encoder.encode(line)); };
+
+    const pump = (async () => {
+      const keepalive = setInterval(() => {
+        writeLine(": keepalive\n\n").catch(() => { /* client gone */ });
+      }, KEEPALIVE_MS);
+      try {
+        await writeLine(": upstream-open\n\n");
+        const assembled = await callOpenAiChat({
+          chatUrl: `${baseUrl}/chat/completions`,
+          accessToken,
+          anthropicBody: parsedBody
+        });
+        const usageRaw = assembled.usage || {};
+        const inputTokens = usageRaw.input_tokens ?? 0;
+        const outputTokens = usageRaw.output_tokens ?? 0;
+        const estCostUsd = (inputTokens || outputTokens || usageRaw.costInUSD != null)
+          ? estimateCostUsd({ inputTokens, outputTokens, costInUSD: usageRaw.costInUSD }, model)
+          : 0;
+        if (inputTokens || outputTokens || estCostUsd) {
+          await recordUsage(env, { inputTokens, outputTokens, estCostUsd });
+        }
+        await recordAudit(env, {
+          source: "extract",
+          status: "ok",
+          durationMs: Date.now() - startedAt,
+          model,
+          inputTokens: inputTokens || undefined,
+          outputTokens: outputTokens || undefined,
+          estCostUsd: (inputTokens || outputTokens || estCostUsd) ? estCostUsd : undefined,
+          flags: flags.length ? flags : undefined
+        });
+        await writeLine(`data: ${JSON.stringify({ type: "ust_result", message: assembled })}\n\n`);
+      } catch (err) {
+        console.error(`extract.js (openai-chat): failed: ${err.message}`);
+        try {
+          await recordAudit(env, {
+            source: "extract",
+            status: "error",
+            durationMs: Date.now() - startedAt,
+            model,
+            flags: flags.length ? flags : undefined
+          });
+        } catch (_) { /* ignore */ }
+        try {
+          await writeLine(`data: ${JSON.stringify({
+            type: "ust_error",
+            error: { message: err.message || "AI Gateway request failed" }
+          })}\n\n`);
+        } catch (_) { /* ignore */ }
+      } finally {
+        clearInterval(keepalive);
+        try { await writer.close(); } catch (_) { /* ignore */ }
+      }
+    })();
+
+    if (typeof waitUntil === "function") waitUntil(pump);
+    return new Response(readable, {
+      status: 200,
+      headers: {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache",
+        "x-ust-stream": "1",
+        "x-ust-result": "1"
+      }
+    });
+  }
+
   let upstreamResponse;
   try {
     upstreamResponse = await fetch(messagesUrl, {

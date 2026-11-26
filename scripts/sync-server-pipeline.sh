@@ -12,6 +12,7 @@ generate() {
       -e 's#from "\./governance\.js"#from "./governance.mjs"#' \
       -e 's#from "\./entra\.js"#from "./entra.mjs"#' \
       -e 's#from "\./derive-rates\.js"#from "./derive-rates.mjs"#' \
+      -e 's#from "\./openai-chat\.js"#from "./openai-chat.mjs"#' \
       worker/src/pipeline.js
 }
 
