@@ -5,7 +5,7 @@ and how to set up a new app the same way. **No secret values are in this file** 
 safe to share inside Bayer. Secrets live in Agentrix (and in the owner's local `.dev.vars`, never in git or chat).
 
 Owner until handover: Karandeep Singh (karandeep.singh@bayer.com), Life Sciences Regulatory.
-Last updated: 23 Nov 2026 (Agentrix stages: section 6).
+Last updated: 26 Nov 2026 (AgriGuide `AGQC_SECOND_MODEL` + 40/min rate limit, UST `QC_MODEL=microsoft-foundry-eu/gpt-6-sol-2`, APRS Opus-only benchmark, Opus 5.5 note).
 
 ---
 
@@ -19,7 +19,7 @@ Last updated: 23 Nov 2026 (Agentrix stages: section 6).
 | Agentrix project | https://agentrix.int.bayer.ai/projects/prj-ff9f7094 | "Agriguide QC Assistant" — https://agentrix.int.bayer.ai/projects/prj-11265a61 |
 | Agentrix agent | `use-summary-table-extractor` (id `agent-27163dcf`) | `agriguide-qc` (id shown in Agentrix → agent → Security) |
 | GitHub (code that is deployed) | https://github.com/bayer-int/use-summary-table (Internal) | https://github.com/bayer-int/agriguide-qc-assistant (Internal) |
-| Older / personal copies | Cloudflare Pages `use-summary-table.pages.dev` | Cloudflare Pages `agriguide-qc-assistant.pages.dev` (to retire) |
+| Older / personal copies | Cloudflare Pages `use-summary-table.pages.dev` | Cloudflare Pages `agriguide-qc-assistant.pages.dev` (closed 9 Nov 2026: kill switch on) |
 | BEAT ID | `BEAT04090032` | `BEAT04090032` (shared — see section 3) |
 | Entra app registration | "Use Summary Table Extractor", client id `5d0b410a-0b42-4427-8bd5-289c1ac0abce` | same (shared) |
 | AI Gateway virtual account | `use-summary-table-extractor-prod` | same (shared) |
@@ -72,14 +72,20 @@ Values used by both apps (none of these are secret):
 | Scope (`AZURE_SCOPE`) | `https://bayer.com/ai-gateway-prod-idp/.default` |
 | Resource app (the Gateway in Entra) | "AI-Gateway-PROD-IDP", app id `cd0c8712-6bcf-4da5-9033-9f0d002cac16` (token `aud`) |
 | Permission on our app | Application permission `llm.read` on AI-Gateway-PROD-IDP, admin consent granted |
-| Gateway endpoint (`TFY_BASE_URL`) | `https://eu.ai-gateway.int.bayer.ai/api/llm` (calls `/v1/messages`) |
-| Model | `anthropic/claude-opus-5` (AgriGuide default; UST uses Opus and Sonnet) |
+| Gateway endpoint (`TFY_BASE_URL`) | `https://eu.ai-gateway.int.bayer.ai/api/llm` (calls `/v1/messages` for Claude and `/chat/completions` for EU GPT-6 Sol) |
+| Model | **AgriGuide QC:** `anthropic/claude-opus-5` (Run 1) + `AGQC_SECOND_MODEL=microsoft-foundry-eu/gpt-6-sol-2` (Run 2, EU-hosted). **UST Extractor:** Stage 1 `anthropic/claude-sonnet-5`, Stage 2 QC & recheck `QC_MODEL=microsoft-foundry-eu/gpt-6-sol-2` (EU-hosted, falls back to Sonnet on final retry), Stage 3 remediation fresh `anthropic/claude-opus-5`. **APRS:** `anthropic/claude-opus-5` only (26 Nov 2026 benchmark on 5 MSDSs showed GPT-6 Sol added 0 new catches). Note: `claude-opus-5-5` fails forced `tool_choice: tool` on Bedrock with HTTP 400. |
 
 AI Gateway hosts (production): `cp.ai-gateway.int.bayer.ai` = portal/admin (log in here to see the virtual
 account); `global.` / `eu.` / `us.ai-gateway.int.bayer.ai` = model calls. Never point an app at `cp`.
 Non-production uses the same names on `…int.bayer.com`.
 
-The only secret either app needs is **`AZURE_CLIENT_SECRET`** (the Entra client secret). A virtual-account API
+The only AI secret either app needs is **`AZURE_CLIENT_SECRET`** (the Entra client secret).
+
+**Quill (AgriGuide QC only).** `QUILL_API_KEY` — from Steve (Quillient), Oct 2026 — lets colleagues pick a label from
+Quill instead of uploading its JSON (`/api/quill`, `functions/api/quill.js`). Set it as a secret on the Agentrix
+agent `agriguide-qc` and on the Cloudflare Pages project (Settings → Variables and secrets, type Secret); without it
+the page simply shows the JSON upload. Optional `QUILL_API_BASE` (default `https://bayer-api.quill4.com/api/ext`). The
+function only searches and reads content through the AgriGuide-Export template; it cannot import, upload or delete. A virtual-account API
 token (`TFY_API_TOKEN`) also works as a fallback, but it auto-rotates every 90 days, so Entra is preferred.
 
 ---
@@ -94,7 +100,7 @@ What that means:
 
 - **Cost and quota are pooled.** The virtual account budget (USD 200 at creation; check the portal for the current
   value) is spent by both apps together. The AI Gateway cannot tell them apart. Each app still has its own
-  daily cap inside the app (`DAILY_BUDGET_USD`, 100 USD/day) and rate limit (`RATE_LIMIT_PER_MINUTE`, 20).
+  daily cap inside the app (`DAILY_BUDGET_USD`, 100 USD/day) and rate limit (`RATE_LIMIT_PER_MINUTE`, 40 for AgriGuide QC / 20 for UST).
 - **One secret, two apps.** If the Entra client secret expires or is rotated, **both apps stop** until the new value
   is pasted into **both** Agentrix agents and both are redeployed.
 - **Revoking access hits both.** Removing `llm.read`, deleting the virtual account or the app registration breaks both.
@@ -205,7 +211,7 @@ Expect the identity steps (1–4) to take days to weeks because of approvals; st
 | Check it's alive | `https://<agent>.agent.agentrix.int.bayer.ai/health` on VPN. First hit after idle can take 30–60 s (scale to zero). |
 | Logs | Agentrix → agent → deployment / pipeline runs → View logs; app audit lines are JSON (metadata only, no label text). |
 | Pause AI use (kill switch) | Set `KILL_SWITCH_ENABLED=true` and `KILL_SWITCH_REASON=...` on the agent, redeploy. Remove to re-enable. |
-| Spending | App caps: `DAILY_BUDGET_USD` (100) and `RATE_LIMIT_PER_MINUTE` (20) per app. Overall: virtual account budget in the AI Gateway portal (shared by both apps). |
+| Spending | App caps: `DAILY_BUDGET_USD` (100) and `RATE_LIMIT_PER_MINUTE` (40 for AgriGuide QC / 20 for UST) per app. Overall: virtual account budget in the AI Gateway portal (shared by both apps). |
 
 ### Stages: Development → QA → Production
 
@@ -269,6 +275,7 @@ UST has four active tokens from its first deploy attempts; only one is in use an
 To tidy up: create one new token, set it as `AGENTRIX_PAT` on the UST agent, redeploy, check `/health` and one
 extraction, then delete the four old tokens. Deleting a token blindly can break the UST agent.
 | Virtual-account API token (only if `TFY_API_TOKEN` is used) | AI Gateway portal | auto-rotates every 90 days (10-day grace) | fallback path only |
+| Quill API key (`QUILL_API_KEY`) | From Quillient (Steve) | not stated — ask Quillient | "From Quill" fails; colleagues upload the JSON instead |
 
 **Renewing the Entra client secret without downtime** (old and new secrets work side by side until the old expires):
 1. Azure portal → "Use Summary Table Extractor" → Certificates & secrets → **New client secret** (24 months) →
@@ -333,12 +340,17 @@ extraction, then delete the four old tokens. Deleting a token blindly can break 
 
 ## 10. App-specific notes
 
-**Use Summary Table Extractor** — see that repo's `DEPLOYMENT.md`. Agentrix secrets: `AZURE_CLIENT_SECRET`,
-`PILOT_GATE_SECRET` (must match `PILOT_GATE_HEADER_VALUE` in `app/index.html`), plus the Agentrix-provided ones.
+**Use Summary Table Extractor** — see that repo's `DEPLOYMENT.md`. Agentrix secrets/env vars (per stage: Dev, QA, Prod):
+`AZURE_CLIENT_SECRET`, `PILOT_GATE_SECRET` (must match `PILOT_GATE_HEADER_VALUE` in `app/index.html`),
+`QC_MODEL=microsoft-foundry-eu/gpt-6-sol-2` (routes Stage 2 independent QC and Stage 3 recheck to EU-hosted GPT-6 Sol
+with automatic Sonnet fallback; remove the variable to fall back to Sonnet-only QC), `RATE_LIMIT_PER_MINUTE=20`,
+`DAILY_BUDGET_USD=100`, plus the Agentrix-provided ones.
 Background jobs run inside the pod, so keep one replica warm (minScale 1) or jobs are lost on restart.
 
-**AgriGuide QC Assistant** — see this repo's `DEPLOYMENT.md`. Agentrix secrets: `AZURE_CLIENT_SECRET`,
-`RATE_LIMIT_PER_MINUTE=20`, `DAILY_BUDGET_USD=100`, `AUDIT_TTL_SECONDS=15552000`, plus the Agentrix-provided ones.
+**AgriGuide QC Assistant** — see this repo's `DEPLOYMENT.md`. Agentrix secrets/env vars (per stage: Dev, QA, Prod):
+`AZURE_CLIENT_SECRET`, `QUILL_API_KEY`, `AGQC_SECOND_MODEL=microsoft-foundry-eu/gpt-6-sol-2` (runs a second independent
+EU-hosted model automatically on every Run QC; remove the variable to fall back to single-model Opus 5),
+`RATE_LIMIT_PER_MINUTE=40`, `DAILY_BUDGET_USD=100`, `AUDIT_TTL_SECONDS=15552000`, plus the Agentrix-provided ones.
 No pilot-gate secret. The QC engine runs in the colleague's browser (Pyodide from `cdn.jsdelivr.net`); label files
 never leave the browser — only the model prompts go through the relay. It never publishes to Quill or AgriGuide.
 Without a persistent volume, colleague feedback and the audit trail reset on restart (copies are in the logs).
