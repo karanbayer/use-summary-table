@@ -171,3 +171,5 @@ Then invoke the recommended agent. The agent will use the recommended model(s) a
 3. **Implement** it following the normal process in Section 2, then mark the task complete.
 
 Never skip straight to implementation for work that isn't already in the specs.
+- Planning (`AGENTS.md` §7): before building, plan without changing files, then get a second plan from a different
+  model (in Copilot: ask the owner to run the planning prompt in a second chat with another model) and compare.

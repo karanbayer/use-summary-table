@@ -79,3 +79,21 @@ When a change is ready, commit and push it yourself; the owner should not have t
   promotes automatically). Tell the owner which version to promote and what changed for users.
 - A deploy restarts the pod and drops extraction jobs in progress (they live in memory). Push app changes outside US
   working hours (roughly 14:00–00:00 German time), or commit with `[skip ci]` and deploy later with the command above.
+
+## 7 · Planning with a second model (any tool)
+
+Before building a change that is more than a typo or a copy fix:
+1. Plan first, without changing files: what is asked and who is affected; how it works today (code, and the real data
+ read-only); consequences and risks; 2–3 options with a recommendation.
+2. Get an independent second plan from a **different model** than the one you run on (another model family if
+ possible, for example Gemini if you are Claude, Claude or GPT if you are Gemini):
+   - If your tool can start a sub-agent on another model (Cursor can), do it: read-only, with the request as it came
+     and these rules, told not to change files, commit, push or call write APIs.
+   - If it cannot (for example Copilot in VS Code, Claude Code), write out the planning prompt ready to paste and ask
+     the owner to run it in a second chat with another model picked in the tool's model menu, then paste the answer back.
+3. Show the owner both recommendations side by side and what one found that the other missed; the owner chooses.
+ Then build, test and deploy as in §6.
+
+If no second model is available, say so and go on with your own plan. Why: in a comparison on 26 Nov 2026 (two real
+AgriGuide requests, three models) the second models found points the first plan missed, including a flaw in a change
+already shipped.
